@@ -24,8 +24,11 @@ def get_database_connection():
         except Exception as e:
             logger.warning(f"Could not connect to configured database URL ({e}). Falling back to local SQLite.")
             
-    # SQLite fallback
-    sqlite_url = "sqlite:///./cybershield.db"
+    # SQLite fallback (uses /tmp on Vercel Serverless where root filesystem is read-only)
+    if os.getenv("VERCEL"):
+        sqlite_url = "sqlite:////tmp/cybershield.db"
+    else:
+        sqlite_url = "sqlite:///./cybershield.db"
     engine = create_engine(
         sqlite_url,
         connect_args={"check_same_thread": False}

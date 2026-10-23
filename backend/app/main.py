@@ -54,27 +54,24 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Register API Routers under /api/v1
-api_v1_prefix = settings.API_V1_PREFIX
-app.include_router(auth.router, prefix=api_v1_prefix)
-app.include_router(employees.router, prefix=api_v1_prefix)
-app.include_router(monitoring.router, prefix=api_v1_prefix)
-app.include_router(dlp.router, prefix=api_v1_prefix)
-app.include_router(url_warning.router, prefix=api_v1_prefix)
-app.include_router(alerts.router, prefix=api_v1_prefix)
-app.include_router(dashboard.router, prefix=api_v1_prefix)
-app.include_router(phishing.router, prefix=api_v1_prefix)
-app.include_router(file_analysis.router, prefix=api_v1_prefix)
-app.include_router(network.router, prefix=api_v1_prefix)
-app.include_router(incidents.router, prefix=api_v1_prefix)
-app.include_router(forensics.router, prefix=api_v1_prefix)
-app.include_router(events.router, prefix=api_v1_prefix)
-app.include_router(system.router, prefix=api_v1_prefix)
+# Register API Routers under /api/v1 (and /v1 in case of path rewriting)
+api_routers = [
+    auth.router, employees.router, monitoring.router, dlp.router,
+    url_warning.router, alerts.router, dashboard.router, phishing.router,
+    file_analysis.router, network.router, incidents.router,
+    forensics.router, events.router, system.router
+]
+
+for router in api_routers:
+    app.include_router(router, prefix=settings.API_V1_PREFIX)
+    # Also support /v1 if hosting service strips /api prefix
+    app.include_router(router, prefix="/v1")
 
 # API Platform Info Endpoint
 @app.get("/api")
