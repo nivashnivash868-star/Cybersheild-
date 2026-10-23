@@ -1,0 +1,15 @@
+# Render Blueprint — one-click deploy for CYBERSHIELD AI
+# Deploy URL: https://render.com/deploy?repo=https://github.com/nivashnivash868-star/Cybersheild-
+services:
+  - type: web
+    name: cybershield-ai
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/v1
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHONUNBUFFERED
+        value: "1"
