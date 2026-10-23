@@ -1,0 +1,26 @@
+{
+  "name": "cybershield-ai-platform",
+  "version": "2.0.0",
+  "description": "CYBERSHIELD AI — Enterprise Cybersecurity Monitoring & SOC Platform",
+  "private": true,
+  "scripts": {
+    "dev": "python3 run.py --dev",
+    "dev:backend": "backend/venv/bin/uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "start": "python3 run.py",
+    "serve": "backend/venv/bin/uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000"
+  },
+  "keywords": [
+    "cybersecurity",
+    "soc",
+    "threat-intelligence",
+    "siem",
+    "dlp",
+    "phishing-detection",
+    "fastapi",
+    "react"
+  ],
+  "author": "CYBERSHIELD AI Team",
+  "license": "MIT"
+}

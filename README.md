@@ -127,36 +127,51 @@
 - Python 3.10+ (tested on Python 3.14)
 - Node.js 18+ (tested on Node v24)
 
-### 1. Backend Configuration & Startup
-```bash
-# Navigate to project root
-cd "GEN AI 2026"
+### 🚀 Quick Start (Joined / One-Command Full Stack)
 
-# Create/activate virtual environment
+CYBERSHIELD AI includes unified full-stack orchestration:
+
+```bash
+# Option A: One-command Unified Production/Demo Server (Port 8000)
+# Serves both the React Frontend UI & FastAPI Backend REST API together:
+python3 run.py
+# or
+./start.sh
+# or
+npm start
+```
+- **Unified Web Application & API**: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+- **Interactive Swagger API Docs**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+```bash
+# Option B: One-command Dual-Server Development Mode (with Live Reload)
+python3 run.py --dev
+# or
+npm run dev
+# or
+./start.sh --dev
+```
+- **Frontend (Vite HMR)**: [http://127.0.0.1:5173/](http://127.0.0.1:5173/) (automatically proxies `/api` calls to port 8000)
+- **Backend (Uvicorn)**: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+
+---
+
+### Manual Multi-Terminal Startup (Optional)
+
+#### 1. Backend Startup
+```bash
 python3 -m venv backend/venv
 source backend/venv/bin/activate
-
-# Install dependencies
 pip install -r backend/requirements.txt
-
-# Start FastAPI backend
 PYTHONPATH=backend uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
-- API is live at: `http://127.0.0.1:8000`
-- Interactive Swagger API Documentation: `http://127.0.0.1:8000/docs`
 
-### 2. Frontend Configuration & Startup
-In a separate terminal:
+#### 2. Frontend Startup
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start Vite development server
 npm run dev
 ```
-- Web Application is live at: `http://127.0.0.1:5173`
 
 ---
 

@@ -6,7 +6,7 @@ import {
   SecretFinding, NotificationDelivery, URLInspectionResult
 } from '../types';
 
-const BASE_URL = '/api/v1';
+const BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api/v1';
 
 let authToken: string | null = localStorage.getItem('cybershield_token');
 
