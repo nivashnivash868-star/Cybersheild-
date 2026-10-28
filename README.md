@@ -16,7 +16,7 @@ implemented and tested.
 | **SOC level 1 (triage)** | Real, automated. Deduplicates, closes noise, escalates, with a reason and confidence on every decision. |
 | **SOC level 2 (investigation)** | Real, automated. Correlates alerts into incidents, maps the kill chain, reaches a verdict, proposes a response. Rule-based and explainable, not learned. |
 | **SOC level 3 (decisions)** | Real, human. Blocks, incident dispositions, account disabling, host isolation, Critical closures and alert rules wait for a person. See [docs/soc-tiers.md](docs/soc-tiers.md). |
-| **Data sources** | Real through [Zetaris](docs/zetaris-schema.md) when configured. Tested against a fake that follows Zetaris's API; see "Verification status". |
+| **Data sources** | Real through [Zetaris](docs/zetaris-schema.md) when configured. Verified against a live local Zetaris instance with synthetic data; see "Verification status". |
 | **Blocking** | Real as authenticated pull feeds (IP, domain, URL) for firewalls and DNS sinkholes, with approval and expiry. Enforcement happens when your firewall pulls the feed. |
 | **Alerts** | Real email (SMTP) and SMS (Twilio) through a queue with retries. Status says `SENT` only when the provider accepted the message. |
 | **Audit** | Real. Append-only HMAC hash chain; administrators can verify it. |
@@ -99,6 +99,7 @@ background worker: alert queue, Zetaris ingest, L1/L2, blocklist expiry
 
 - The backend test suite passes, and the image builds and runs its tests on Python 3.13.
 - The application has been run against PostgreSQL and a mail catcher in Docker, and each role's UI has been exercised.
-- The Zetaris integration has been tested against a fake that follows Zetaris's published API and runs its SQL on
-  SQLite. Dialect differences, timestamp formats and page numbering still need confirming against a live instance.
+- The Zetaris integration has been run against a live local Zetaris instance (the hackathon bundle) loaded with the
+  synthetic dataset, end to end: ingest, L1 triage, L2 investigation with raw-log evidence, and the investigation view.
+  It has not been run against Zetaris Cloud or against real production logs.
 - The scoring thresholds in levels 1 and 2 are heuristics. They have not been validated on real incident data.

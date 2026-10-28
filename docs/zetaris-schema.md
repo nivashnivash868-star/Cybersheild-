@@ -61,8 +61,42 @@ failed-login burst from `45.155.205.233` followed by a success, then a ~120 MB t
 - The investigation endpoint accepts only an IP, username or email, and is limited to 30 requests a minute per user.
 - Blocks suggested from an investigation are only suggestions: they still go through the blocklist approval workflow.
 
-## Verified and not verified
+## Running against the local Zetaris bundle
 
-Tested against an in-memory fake that follows Zetaris's published OpenAPI spec and executes the SQL on SQLite. **Not
-yet verified against a live Zetaris instance**: Spark/Trino SQL dialect differences, timestamp formats in returned
-records, and page numbering (the client handles a first page numbered from 0 or 1).
+The hackathon bundle runs Zetaris as Docker containers on your machine. Its REST API is the same one documented for the
+cloud, with these local values:
+
+```
+ZETARIS_BASE_URL=http://127.0.0.1:8888
+ZETARIS_ORG_ID=1
+ZETARIS_USERNAME=<the bundle's admin email>      # logging in returns a token that works for queries
+ZETARIS_PASSWORD=<the bundle's admin password>   # set in the environment, never committed
+ZETARIS_TABLE_AUTH=cybershield.auth_logs
+ZETARIS_TABLE_NETWORK=cybershield.network_flows
+ZETARIS_TABLE_EMAIL=cybershield.email_logs
+ZETARIS_DATA_IS_SYNTHETIC=true                   # marks the data SIMULATED while it is the generated test set
+```
+
+Things that are not in Zetaris's public documentation and had to be found out:
+
+- **The query API only accepts `SELECT`.** Creating databases and tables is done over JDBC with the driver jar in the
+  bundle (`com.zetaris.lightning.jdbc.LightningDriver`, `jdbc:zetaris:lightning@localhost:10000`), one statement per call.
+- **Local files must live under `/home/zetaris/customer-data/shared`** inside the driver container; any other path is
+  refused with "Invalid file path to access". Copy CSVs there (`docker cp`), then:
+
+  ```sql
+  CREATE LIGHTNING DATABASE cybershield DESCRIBE BY "CyberShield security logs - SYNTHETIC test data";
+  CREATE LIGHTNING FILESTORE TABLE auth_logs FROM cybershield FORMAT CSV OPTIONS (
+    path "/home/zetaris/customer-data/shared/synthetic/synthetic_auth_logs.csv", header "true", inferSchema "true");
+  ```
+- **Every value comes back as a string**, timestamps look like `2026-10-28 10:13:12.0`, and the first page is numbered 1.
+  The client and the test fake both reflect this.
+
+## Verification
+
+Run against a live local Zetaris (the hackathon bundle) with the generated synthetic data: the client connects and
+lists databases, the ingest read all three tables, L1 closed 18 of 23 alerts, L2 correlated the rest into one incident
+and called it a true positive at 93% using raw-log evidence from Zetaris, and the investigation view returned the
+attacker's 29-entry timeline. Also tested against a fake that follows the published API and returns real-world value
+formats. Not yet checked: Zetaris Cloud (the SaaS endpoint), and other dialect behaviour such as very large result
+sets.
