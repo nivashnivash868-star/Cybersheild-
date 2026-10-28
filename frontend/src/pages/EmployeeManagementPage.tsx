@@ -12,6 +12,7 @@ export const EmployeeManagementPage: React.FC = () => {
   const { theme } = useTheme();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('All Departments');
   const [statusFilter, setStatusFilter] = useState('All Status');
@@ -34,18 +35,6 @@ export const EmployeeManagementPage: React.FC = () => {
   });
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Seed with realistic records matching Screen 3 if empty
-  const defaultMockEmployees: Employee[] = [
-    { id: 1, employee_id: 'EMP001', full_name: 'Rahul Kumar', company_email: 'rahul.k@company.com', phone_number: '+91 98765 43210', department: 'IT', role_title: 'Employee', monitoring_policy: 'Standard', is_active: true, risk_level: 'High', created_at: '2026-01-10T08:00:00Z', updated_at: '2026-10-22T08:00:00Z' },
-    { id: 2, employee_id: 'EMP002', full_name: 'Priya Sharma', company_email: 'priya.s@company.com', phone_number: '+91 91234 56789', department: 'HR', role_title: 'Employee', monitoring_policy: 'Standard', is_active: true, risk_level: 'Critical', created_at: '2026-01-12T08:00:00Z', updated_at: '2026-10-22T08:00:00Z' },
-    { id: 3, employee_id: 'EMP003', full_name: 'Arun Mehta', company_email: 'arun.m@company.com', phone_number: '+91 87654 32109', department: 'Finance', role_title: 'Employee', monitoring_policy: 'Strict', is_active: true, risk_level: 'High', created_at: '2026-02-01T08:00:00Z', updated_at: '2026-10-22T08:00:00Z' },
-    { id: 4, employee_id: 'EMP004', full_name: 'Divya R', company_email: 'divya.r@company.com', phone_number: '+91 93456 78901', department: 'Marketing', role_title: 'Employee', monitoring_policy: 'Standard', is_active: true, risk_level: 'Low', created_at: '2026-02-15T08:00:00Z', updated_at: '2026-10-22T08:00:00Z' },
-    { id: 5, employee_id: 'EMP005', full_name: 'Karan V', company_email: 'karan.v@company.com', phone_number: '+91 99887 76655', department: 'IT', role_title: 'Employee', monitoring_policy: 'High', is_active: false, risk_level: 'Medium', created_at: '2026-03-01T08:00:00Z', updated_at: '2026-10-22T08:00:00Z' },
-    { id: 6, employee_id: 'EMP006', full_name: 'Sneha T', company_email: 'sneha.t@company.com', phone_number: '+91 91765 44321', department: 'HR', role_title: 'Employee', monitoring_policy: 'Standard', is_active: true, risk_level: 'Low', created_at: '2026-03-10T08:00:00Z', updated_at: '2026-10-22T08:00:00Z' },
-    { id: 7, employee_id: 'EMP007', full_name: 'Adithya R', company_email: 'adithya.r@company.com', phone_number: '+91 97890 12345', department: 'Finance', role_title: 'Employee', monitoring_policy: 'Strict', is_active: true, risk_level: 'Medium', created_at: '2026-04-01T08:00:00Z', updated_at: '2026-10-22T08:00:00Z' },
-    { id: 8, employee_id: 'EMP008', full_name: 'Nithya S', company_email: 'nithya.s@company.com', phone_number: '+91 95567 88990', department: 'Marketing', role_title: 'Employee', monitoring_policy: 'Standard', is_active: true, risk_level: 'Low', created_at: '2026-04-12T08:00:00Z', updated_at: '2026-10-22T08:00:00Z' },
-  ];
-
   const loadEmployees = async () => {
     setLoading(true);
     try {
@@ -53,14 +42,11 @@ export const EmployeeManagementPage: React.FC = () => {
         department: departmentFilter !== 'All Departments' ? departmentFilter : undefined,
         search: search.trim() || undefined,
       });
-      if (data && data.length > 0) {
-        setEmployees(data);
-      } else {
-        setEmployees(defaultMockEmployees);
-      }
-    } catch (err) {
-      console.warn('Using mock employee records:', err);
-      setEmployees(defaultMockEmployees);
+      setEmployees(data);
+      setLoadError(null);
+    } catch (err: any) {
+      setEmployees([]);
+      setLoadError(err.message || 'Could not load employees.');
     } finally {
       setLoading(false);
     }
@@ -111,34 +97,24 @@ export const EmployeeManagementPage: React.FC = () => {
       setShowAddModal(false);
       loadEmployees();
     } catch (err: any) {
-      // Add locally for instant UI responsiveness
-      const newEmp: Employee = {
-        id: Date.now(),
-        employee_id: formData.employee_id,
-        full_name: formData.full_name,
-        company_email: formData.company_email,
-        phone_number: formData.phone_number,
-        department: formData.department,
-        role_title: formData.role_title,
-        monitoring_policy: formData.monitoring_policy,
-        is_active: true,
-        risk_level: 'Low',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      setEmployees([newEmp, ...employees]);
-      setShowAddModal(false);
+      setFormError(err.message || 'The employee could not be created.');   // never show a record the server did not save
     }
   };
 
-  const handleDelete = (emp: Employee) => {
-    if (window.confirm(`Delete employee record for ${emp.full_name}?`)) {
-      setEmployees(employees.filter((e) => e.employee_id !== emp.employee_id));
+  const handleToggleActive = async (emp: Employee) => {
+    const next = !emp.is_active;
+    if (!window.confirm(`${next ? 'Reactivate' : 'Deactivate'} ${emp.full_name}? Their record is kept.`)) return;
+    try {
+      await api.updateEmployee(emp.employee_id, { is_active: next });
+      await loadEmployees();
+    } catch (err: any) {
+      setLoadError(err.message || 'The change could not be saved.');
     }
   };
 
   return (
     <div className="space-y-6">
+      {loadError && <div role="alert" className="p-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 text-xs">{loadError}</div>}
       {/* Title & Description matching Screen 3 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
         <div>
@@ -271,9 +247,9 @@ export const EmployeeManagementPage: React.FC = () => {
                         <Edit className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={() => handleDelete(emp)}
+                        onClick={() => void handleToggleActive(emp)}
                         className="p-1.5 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition"
-                        title="Delete Employee"
+                        title={emp.is_active ? 'Deactivate employee' : 'Reactivate employee'}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>

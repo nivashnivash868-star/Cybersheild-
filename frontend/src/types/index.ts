@@ -254,6 +254,7 @@ export interface UserSession {
   department: string;
   is_active: boolean;
   mfa_enabled: boolean;
+  employee_id?: string | null;
 }
 
 /** `ok` = fully signed in; `verify` = enter a TOTP code; `enroll` = this role must set up MFA first. */
@@ -441,8 +442,9 @@ export interface Employee {
   phone_number?: string | null;
   department: string;
   role_title: string;
-  monitoring_policy: 'Strict' | 'High' | 'Standard' | 'Low';
+  monitoring_policy: string;
   is_active: boolean;
+  risk_score?: number;
   risk_level: Severity;
   recent_events_count?: number;
   created_at: string;

@@ -1,202 +1,103 @@
-import React, { useState } from 'react';
-import {
-  BarChart3, Download, FileText, Calendar, Filter, Sparkles,
-  TrendingUp, ShieldCheck, CheckCircle2, AlertTriangle
-} from 'lucide-react';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend
-} from 'recharts';
-import { useTheme } from '../context/ThemeContext';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Download, RefreshCw } from 'lucide-react';
+import { api } from '../api/client';
+import { DashboardMetrics, IncidentDetail, SecurityEvent, SocOverview } from '../types';
+import { SimulatedBanner } from '../components/common/Simulated';
 
+const card = 'bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5';
+
+const count = <T,>(rows: T[], key: (r: T) => string) =>
+  Object.entries(rows.reduce<Record<string, number>>((acc, r) => { const k = key(r) || 'Unknown'; acc[k] = (acc[k] ?? 0) + 1; return acc; }, {})).sort((a, b) => b[1] - a[1]);
+
+/** Reports computed from stored data. The downloadable summary contains the same numbers shown here and nothing else. */
 export const ReportsPage: React.FC = () => {
-  const { theme } = useTheme();
-  const [activeTab, setActiveTab] = useState<'trends' | 'threats' | 'employees' | 'leaks' | 'custom'>('trends');
-  const [timeRange, setTimeRange] = useState('Last 30 Days');
-  const [generating, setGenerating] = useState(false);
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [soc, setSoc] = useState<SocOverview | null>(null);
+  const [events, setEvents] = useState<SecurityEvent[]>([]);
+  const [incidents, setIncidents] = useState<IncidentDetail[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
-  // Sample data matching Screen 11
-  const reportsData = [
-    { period: 'Sep 22', phishing: 300, malware: 200, dataLeak: 150, suspiciousUrl: 80 },
-    { period: 'Sep 29', phishing: 420, malware: 260, dataLeak: 210, suspiciousUrl: 130 },
-    { period: 'Oct 06', phishing: 360, malware: 310, dataLeak: 180, suspiciousUrl: 100 },
-    { period: 'Oct 13', phishing: 510, malware: 390, dataLeak: 290, suspiciousUrl: 190 },
-    { period: 'Oct 20', phishing: 480, malware: 340, dataLeak: 240, suspiciousUrl: 160 },
-  ];
+  const load = useCallback(async () => {
+    try {
+      const [m, s, e, i] = await Promise.all([api.getDashboardMetrics(), api.getSocOverview(), api.getEvents({ limit: 200 }), api.getIncidents()]);
+      setMetrics(m); setSoc(s); setEvents(e); setIncidents(i); setError(null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
 
-  const handleGenerateReport = () => {
-    setGenerating(true);
-    setTimeout(() => {
-      setGenerating(false);
-      alert('Security Report compiled and ready for download: CYBERSHIELD_EXECUTIVE_AUDIT_Q4.pdf');
-    }, 1200);
+  const bySeverity = count(events, (e) => e.severity);
+  const byCategory = count(events, (e) => e.threat_category).slice(0, 8);
+  const byStatus = count(incidents, (i) => i.status);
+  const bySource = count(events, (e) => e.event_source).slice(0, 6);
+  const simulated = metrics?.simulated_events_total ?? 0;
+
+  const download = () => {
+    if (!metrics || !soc) return;
+    const lines = [
+      '# CYBERSHIELD AI security summary', '', `Generated ${new Date().toISOString()} from stored data.`,
+      simulated > 0 ? `\n> ${simulated} of ${metrics.total_events_analyzed} events are SIMULATED test data.\n` : '',
+      '## Totals', `- Events analysed: ${metrics.total_events_analyzed}`, `- Events in the last 24 hours: ${metrics.events_last_24h}`,
+      `- Open investigations: ${metrics.open_investigations}`, `- Critical incidents: ${metrics.critical_incidents}`,
+      '', '## Automation', `- Level 1 triaged ${soc.l1.triaged} alerts: ${soc.l1.auto_closed + soc.l1.duplicates} closed automatically, ${soc.l1.escalated} escalated`,
+      `- Level 2 investigated ${soc.l2.incidents_investigated} incidents: ${soc.l2.true_positive} true positive, ${soc.l2.needs_human} need a human, ${soc.l2.false_positive} benign`,
+      `- Level 3 decisions: ${soc.l3.pending} pending, ${soc.l3.approved} approved, ${soc.l3.rejected} rejected`,
+      soc.automation_rate != null ? `- Share handled without a person: ${Math.round(soc.automation_rate * 100)}%` : '',
+      '', '## Events by severity', ...bySeverity.map(([k, v]) => `- ${k}: ${v}`),
+      '', '## Top detections', ...byCategory.map(([k, v]) => `- ${k}: ${v}`),
+      '', '## Incidents by status', ...byStatus.map(([k, v]) => `- ${k}: ${v}`),
+      '', `_Based on the most recent ${events.length} events and ${incidents.length} incidents._`,
+    ].filter((l) => l !== undefined);
+    const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/markdown' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `cybershield-summary-${new Date().toISOString().slice(0, 10)}.md`; a.click(); URL.revokeObjectURL(url);
+  };
+
+  const Bars: React.FC<{ rows: [string, number][]; tone: string }> = ({ rows, tone }) => {
+    const max = Math.max(1, ...rows.map((r) => r[1]));
+    return (
+      <ul className="space-y-2">
+        {rows.length === 0 && <li className="text-xs text-slate-500">{loaded ? 'No data yet.' : 'Loading…'}</li>}
+        {rows.map(([k, v]) => (
+          <li key={k} className="text-xs"><div className="flex justify-between text-slate-700 dark:text-slate-300"><span className="truncate pr-2">{k}</span><b>{v}</b></div>
+            <div className="h-1.5 rounded bg-slate-100 dark:bg-slate-800 mt-1"><div className={`h-1.5 rounded ${tone}`} style={{ width: `${(v / max) * 100}%` }} /></div></li>
+        ))}
+      </ul>
+    );
   };
 
   return (
     <div className="space-y-6">
-      {/* Header matching Screen 11 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-            Security Reports
-          </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Enterprise analytics, threat trends, and compliance reporting
-          </p>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Reports</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">A summary of what is stored right now: events, incidents and what the automation did</p>
         </div>
-
         <div className="flex items-center gap-2">
-          <select
-            value={timeRange}
-            onChange={(e) => setTimeRange(e.target.value)}
-            className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300"
-          >
-            <option value="Last 30 Days">Last 30 Days</option>
-            <option value="Last 90 Days">Last 90 Days</option>
-            <option value="Year to Date">Year to Date</option>
-          </select>
-
-          <button
-            onClick={handleGenerateReport}
-            disabled={generating}
-            className="flex items-center gap-2 px-3.5 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-semibold shadow-xs transition"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>{generating ? 'Compiling...' : 'Generate Report'}</span>
-          </button>
+          <button onClick={() => void load()} aria-label="Refresh" className="p-1.5 text-slate-500 hover:text-sky-600"><RefreshCw className="w-4 h-4" /></button>
+          <button onClick={download} disabled={!metrics || !soc} className="flex items-center gap-2 px-3.5 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-semibold disabled:opacity-50"><Download className="w-3.5 h-3.5" /> Download summary</button>
         </div>
       </div>
+      {error && <div role="alert" className="p-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 text-xs">Couldn't load the report: {error}</div>}
+      {metrics && <SimulatedBanner simulated={simulated} total={metrics.total_events_analyzed} />}
 
-      {/* Navigation Sub-Tabs matching Screen 11 */}
-      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 text-xs font-semibold">
-        <button
-          onClick={() => setActiveTab('trends')}
-          className={`px-3 py-1.5 rounded-lg transition ${
-            activeTab === 'trends'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          Threat Trends
-        </button>
-        <button
-          onClick={() => setActiveTab('threats')}
-          className={`px-3 py-1.5 rounded-lg transition ${
-            activeTab === 'threats'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          Top Threats
-        </button>
-        <button
-          onClick={() => setActiveTab('employees')}
-          className={`px-3 py-1.5 rounded-lg transition ${
-            activeTab === 'employees'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          Employee Risk
-        </button>
-        <button
-          onClick={() => setActiveTab('leaks')}
-          className={`px-3 py-1.5 rounded-lg transition ${
-            activeTab === 'leaks'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          Data Leaks
-        </button>
-        <button
-          onClick={() => setActiveTab('custom')}
-          className={`px-3 py-1.5 rounded-lg transition ${
-            activeTab === 'custom'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          Custom Reports
-        </button>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+        {[['Events analysed', metrics?.total_events_analyzed], ['Last 24 hours', metrics?.events_last_24h], ['Open investigations', metrics?.open_investigations], ['Handled without a person', soc?.automation_rate != null ? `${Math.round(soc.automation_rate * 100)}%` : '-']].map(([label, value]) => (
+          <div key={String(label)} className={card}><div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">{label}</div><div className="text-2xl font-bold text-slate-900 dark:text-white">{value ?? '-'}</div></div>
+        ))}
       </div>
 
-      {/* Main Bar Chart matching Screen 11 */}
-      <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Threat Trends Timeline</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Weekly threat volume categorized by attack vector</p>
-          </div>
-        </div>
-
-        <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={reportsData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                vertical={false}
-                stroke={theme === 'dark' ? '#334155' : '#f1f5f9'}
-              />
-              <XAxis
-                dataKey="period"
-                tickLine={false}
-                axisLine={{ stroke: theme === 'dark' ? '#475569' : '#cbd5e1' }}
-                tick={{ fill: theme === 'dark' ? '#94a3b8' : '#64748b', fontSize: 11 }}
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: theme === 'dark' ? '#94a3b8' : '#64748b', fontSize: 11 }}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: theme === 'dark' ? '#1e293b' : '#ffffff',
-                  borderColor: theme === 'dark' ? '#334155' : '#e2e8f0',
-                  color: theme === 'dark' ? '#f8fafc' : '#0f172a',
-                  borderRadius: '8px',
-                  fontSize: '11px',
-                }}
-              />
-              <Legend
-                verticalAlign="bottom"
-                wrapperStyle={{ paddingTop: '16px', fontSize: '11px' }}
-              />
-              <Bar dataKey="phishing" name="Phishing" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="malware" name="Malware" fill="#0284c7" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="dataLeak" name="Data Leak" fill="#f97316" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="suspiciousUrl" name="Suspicious URL" fill="#10b981" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Events by severity</h2><Bars rows={bySeverity} tone="bg-red-500" /></section>
+        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Top detections</h2><Bars rows={byCategory} tone="bg-violet-500" /></section>
+        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Incidents by status</h2><Bars rows={byStatus} tone="bg-sky-500" /></section>
+        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Where events come from</h2><Bars rows={bySource} tone="bg-emerald-500" /></section>
       </div>
-
-      {/* Summary KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-[11px] text-slate-500 dark:text-slate-400">Total Threats Analyzed</span>
-          <div className="text-2xl font-bold text-slate-900 dark:text-white mt-1">4,812</div>
-          <p className="text-[10px] text-emerald-600 mt-0.5">+12% vs previous period</p>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-[11px] text-slate-500 dark:text-slate-400">Mean Time to Detect (MTTD)</span>
-          <div className="text-2xl font-bold text-sky-600 dark:text-sky-400 mt-1">1.4 min</div>
-          <p className="text-[10px] text-emerald-600 mt-0.5">Automated ML classification</p>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-[11px] text-slate-500 dark:text-slate-400">Mean Time to Remediate (MTTR)</span>
-          <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">8.2 min</div>
-          <p className="text-[10px] text-slate-400 mt-0.5">Automated web gateway block</p>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-[11px] text-slate-500 dark:text-slate-400">SOC 2 Compliance Score</span>
-          <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">98.4%</div>
-          <p className="text-[10px] text-emerald-600 mt-0.5">Audit log integrity verified</p>
-        </div>
-      </div>
+      <p className="text-[11px] text-slate-500">Charts use the most recent {events.length} events and {incidents.length} incidents.</p>
     </div>
   );
 };

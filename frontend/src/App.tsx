@@ -188,17 +188,17 @@ export function App() {
             {currentTab === 'employees' && <EmployeeManagementPage />}
 
             {/* Screen 4: Monitoring Center (Web Activity, Email, Files, Sources) */}
-            {currentTab === 'monitoring_web' && <MonitoringCenterPage initialSubTab="web" />}
-            {currentTab === 'monitoring_email' && <MonitoringCenterPage initialSubTab="email" />}
-            {currentTab === 'monitoring_file' && <MonitoringCenterPage initialSubTab="files" />}
-            {currentTab === 'monitoring' && <MonitoringCenterPage initialSubTab="sources" />}
+            {currentTab === 'monitoring_web' && <MonitoringCenterPage key="monitoring_web" initialSubTab="web" onOpenIncident={handleSelectIncidentFromStream} />}
+            {currentTab === 'monitoring_email' && <MonitoringCenterPage key="monitoring_email" initialSubTab="email" onOpenIncident={handleSelectIncidentFromStream} />}
+            {currentTab === 'monitoring_file' && <MonitoringCenterPage key="monitoring_file" initialSubTab="files" onOpenIncident={handleSelectIncidentFromStream} />}
+            {currentTab === 'monitoring' && <MonitoringCenterPage key="monitoring" initialSubTab="sources" onOpenIncident={handleSelectIncidentFromStream} />}
 
             {/* Screen 5: Threat Detection (Phishing Email, URL Scanner, File, Network) */}
-            {currentTab === 'threats_phishing' && <ThreatDetectionPage initialSubTab="phishing" />}
-            {currentTab === 'threats_url' && <ThreatDetectionPage initialSubTab="url" />}
+            {currentTab === 'threats_phishing' && <ThreatDetectionPage key="threats_phishing" initialSubTab="phishing" onOpenIncident={handleSelectIncidentFromStream} />}
+            {currentTab === 'threats_url' && <ThreatDetectionPage key="threats_url" initialSubTab="url" onOpenIncident={handleSelectIncidentFromStream} />}
             {currentTab === 'threats_files' && <FileAnalysisPage />}
             {currentTab === 'threats_network' && <NetworkAnomalyPage />}
-            {currentTab === 'threats' && <ThreatDetectionPage initialSubTab="phishing" />}
+            {currentTab === 'threats' && <ThreatDetectionPage key="threats" initialSubTab="phishing" onOpenIncident={handleSelectIncidentFromStream} />}
 
             {/* Screen 6: Secret Detection (DLP) */}
             {(currentTab === 'secrets' || currentTab === 'dlp') && <DLPPage />}

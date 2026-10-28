@@ -19,97 +19,22 @@ export const DLPPage: React.FC = () => {
   // Scanner Form state
   const [scanText, setScanText] = useState('');
   const [sourceType, setSourceType] = useState('GitHub');
-  const [locationRef, setLocationRef] = useState('repo:backend-payments/config.json');
-  const [employeeEmail, setEmployeeEmail] = useState('marcus.chen@enterprise-corp.com');
+  const [locationRef, setLocationRef] = useState('');
+  const [employeeEmail, setEmployeeEmail] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<{ secrets_found_count: number; findings: SecretFinding[] } | null>(null);
 
-  // Mock records matching Screen 6 if empty
-  const defaultMockFindings: SecretFinding[] = [
-    {
-      id: 1,
-      finding_id: 'DLP-001',
-      secret_type: 'API Key',
-      masked_value: 'sk_live_********************************',
-      secret_hash: 'hash-001',
-      source_type: 'GitHub',
-      location_reference: 'repo:payment-service/config.json',
-      exposure_scope: 'Public Repository',
-      risk_score: 95,
-      severity: 'Critical',
-      status: 'Active',
-      detected_at: '2026-10-22T09:50:00Z',
-    },
-    {
-      id: 2,
-      finding_id: 'DLP-002',
-      secret_type: 'Password',
-      masked_value: 'password=****************',
-      secret_hash: 'hash-002',
-      source_type: 'Code Repository',
-      location_reference: 'repo:infra/deploy.sh',
-      exposure_scope: 'Internal GitLab',
-      risk_score: 85,
-      severity: 'High',
-      status: 'Remediated',
-      detected_at: '2026-10-22T08:30:00Z',
-    },
-    {
-      id: 3,
-      finding_id: 'DLP-003',
-      secret_type: 'Database URL',
-      masked_value: 'postgresql://admin:****************@prod-db',
-      secret_hash: 'hash-003',
-      source_type: 'Database Pool',
-      location_reference: 'slack:#dev-channel/snippet.env',
-      exposure_scope: 'Corporate Slack',
-      risk_score: 88,
-      severity: 'High',
-      status: 'Active',
-      detected_at: '2026-10-22T07:15:00Z',
-    },
-    {
-      id: 4,
-      finding_id: 'DLP-004',
-      secret_type: 'Access Token',
-      masked_value: 'ya29.********************************',
-      secret_hash: 'hash-004',
-      source_type: 'Web Paste Site',
-      location_reference: 'pastebin.com/raw/d849fa',
-      exposure_scope: 'Public Web',
-      risk_score: 72,
-      severity: 'Medium',
-      status: 'Remediated',
-      detected_at: '2026-10-22T06:30:00Z',
-    },
-    {
-      id: 5,
-      finding_id: 'DLP-005',
-      secret_type: 'Private Key',
-      masked_value: '-----BEGIN RSA PRIVATE KEY-----',
-      secret_hash: 'hash-005',
-      source_type: 'Cloud Storage',
-      location_reference: 's3://prod-backups/id_rsa',
-      exposure_scope: 'Misconfigured S3 Bucket',
-      risk_score: 92,
-      severity: 'High',
-      status: 'Active',
-      detected_at: '2026-10-22T05:10:00Z',
-    },
-  ];
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadFindings = async () => {
     setLoading(true);
     try {
       const data = await api.getDLPFindings();
-      if (data && data.length > 0) {
-        setFindings(data);
-      } else {
-        setFindings(defaultMockFindings);
-      }
-    } catch (err) {
-      console.warn('Using default DLP findings:', err);
-      setFindings(defaultMockFindings);
+      setFindings(data ?? []);
+      setLoadError(null);
+    } catch (err: any) {
+      setFindings([]);
+      setLoadError(err.message || 'Could not load findings.');
     } finally {
       setLoading(false);
     }
@@ -172,6 +97,7 @@ export const DLPPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {loadError && <div role="alert" className="p-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 text-xs">{loadError}</div>}
       {/* Header matching Screen 6 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
         <div>

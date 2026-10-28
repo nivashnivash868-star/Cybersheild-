@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ShieldCheck, AlertTriangle, Globe, Bell, CheckCircle2,
   ExternalLink, Mail, Send, Lock, ArrowRight, ShieldAlert,
@@ -15,20 +15,29 @@ interface Props {
 
 export const EmployeeDashboardPage: React.FC<Props> = ({ currentUser, onNavigateToTab }) => {
   const { theme } = useTheme();
-  const employeeName = currentUser?.name || 'Rahul Kumar';
-  const employeeEmail = currentUser?.email || 'rahul.k@company.com';
+  const employeeName = currentUser?.name ?? '';
+  const employeeEmail = currentUser?.email ?? '';
 
   const [reportType, setReportType] = useState<'email' | 'url'>('email');
   const [reportContent, setReportContent] = useState('');
   const [submittingReport, setSubmittingReport] = useState(false);
   const [reportSuccess, setReportSuccess] = useState(false);
 
-  // Recent Alerts matching Screen 9
-  const recentAlerts = [
-    { id: 1, time: '10:24 AM', alert: 'Suspicious Website Blocked', risk: 'High' },
-    { id: 2, time: '09:12 AM', alert: 'Suspicious Email Detected', risk: 'Medium' },
-    { id: 3, time: '08:30 AM', alert: 'File Upload Monitored', risk: 'Low' },
-  ];
+  // The employee's own alerts, from the server. Nothing is invented when there are none or the call fails.
+  const [recentAlerts, setRecentAlerts] = useState<{ id: string; time: string; alert: string; risk: string }[]>([]);
+  const [alertsError, setAlertsError] = useState<string | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const id = currentUser?.employee_id;
+    if (!id) return;
+    api.getEmployeeEvents(id)
+      .then((events) => setRecentAlerts(events.slice(0, 8).map((e) => ({
+        id: e.event_id, alert: e.threat_category, risk: e.severity,
+        time: new Date(/[zZ]$/.test(e.timestamp) ? e.timestamp : e.timestamp + 'Z').toLocaleString(),
+      }))))
+      .catch((e) => setAlertsError(e.message));
+  }, [currentUser?.employee_id]);
 
   const handleReportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,10 +49,11 @@ export const EmployeeDashboardPage: React.FC<Props> = ({ currentUser, onNavigate
         content: reportContent.trim(),
       });
       setReportSuccess(true);
+      setReportError(null);
       setReportContent('');
     } catch (err: any) {
-      setReportSuccess(true);
-      setReportContent('');
+      setReportSuccess(false);
+      setReportError(err.message || 'Your report could not be sent. Please try again.');   // never claim success on failure
     } finally {
       setSubmittingReport(false);
     }
@@ -78,7 +88,7 @@ export const EmployeeDashboardPage: React.FC<Props> = ({ currentUser, onNavigate
           </div>
           <div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Security Alerts</div>
-            <div className="text-2xl font-bold text-slate-900 dark:text-white">5</div>
+            <div className="text-2xl font-bold text-slate-900 dark:text-white">{recentAlerts.length}</div>
           </div>
         </div>
 
@@ -89,7 +99,7 @@ export const EmployeeDashboardPage: React.FC<Props> = ({ currentUser, onNavigate
           </div>
           <div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Suspicious URLs</div>
-            <div className="text-2xl font-bold text-slate-900 dark:text-white">2</div>
+            <div className="text-2xl font-bold text-slate-900 dark:text-white">{recentAlerts.filter((a) => /url|phish|domain|link|site/i.test(a.alert)).length}</div>
           </div>
         </div>
 
@@ -100,7 +110,7 @@ export const EmployeeDashboardPage: React.FC<Props> = ({ currentUser, onNavigate
           </div>
           <div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Action Required</div>
-            <div className="text-2xl font-bold text-red-600 dark:text-red-400">1</div>
+            <div className="text-2xl font-bold text-red-600 dark:text-red-400">{recentAlerts.filter((a) => a.risk === 'High' || a.risk === 'Critical').length}</div>
           </div>
         </div>
 
@@ -111,7 +121,7 @@ export const EmployeeDashboardPage: React.FC<Props> = ({ currentUser, onNavigate
           </div>
           <div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Status</div>
-            <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">Active</div>
+            <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{currentUser?.is_active ? 'Active' : 'Inactive'}</div>
           </div>
         </div>
       </div>
@@ -141,6 +151,9 @@ export const EmployeeDashboardPage: React.FC<Props> = ({ currentUser, onNavigate
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {recentAlerts.length === 0 && (
+                    <tr><td colSpan={3} className="py-6 px-4 text-center text-xs text-slate-500">{alertsError ?? 'No alerts for you right now.'}</td></tr>
+                  )}
                   {recentAlerts.map((alt) => (
                     <tr key={alt.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                       <td className="py-3 px-4 font-mono text-slate-500 dark:text-slate-400">{alt.time}</td>
@@ -184,6 +197,7 @@ export const EmployeeDashboardPage: React.FC<Props> = ({ currentUser, onNavigate
                 {submittingReport ? 'Sending...' : 'Report'}
               </button>
             </form>
+            {reportError && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{reportError}</p>}
             {reportSuccess && (
               <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1">
                 ✓ Report delivered to SOC Analyst team. Thank you!

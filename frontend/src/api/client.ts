@@ -1,4 +1,5 @@
 import {
+  Severity,
   DashboardMetrics, ThreatSeverityDistribution, ActivityDataPoint,
   SecurityEvent, PhishingAnalysisResult, FileAnalysisResult,
   NetworkAnalysisBatchResult, IncidentDetail, ForensicInvestigation,
@@ -67,7 +68,11 @@ const toSession = (u: any): UserSession => ({
   department: u.department || 'Security Operations',
   is_active: u.is_active,
   mfa_enabled: !!u.mfa_enabled,
+  employee_id: u.employee_id ?? null,
 });
+
+const riskLevel = (score: number | undefined): Severity => ((score ?? 0) >= 80 ? 'Critical' : (score ?? 0) >= 60 ? 'High' : (score ?? 0) >= 35 ? 'Medium' : 'Low');
+const toEmployee = (e: any): Employee => ({ ...e, risk_level: riskLevel(e.risk_score) });
 
 const toState = (res: any): SessionState => ({
   user: toSession(res.user),
@@ -129,23 +134,17 @@ export const api = {
   revokeFeedToken: (id: number) => request<{ status: string }>(`/blocklist/feeds/${id}`, { method: 'DELETE' }),
 
   // Employee Management
-  getEmployees: (params?: { department?: string; policy?: string; search?: string }) => {
+  getEmployees: async (params?: { department?: string; policy?: string; search?: string }): Promise<Employee[]> => {
     const query = new URLSearchParams();
     if (params?.department && params.department !== 'All') query.set('department', params.department);
     if (params?.policy && params.policy !== 'All') query.set('policy', params.policy);
     if (params?.search) query.set('search', params.search);
-    return request<Employee[]>(`/employees?${query.toString()}`);
+    return (await request<any[]>(`/employees?${query.toString()}`)).map(toEmployee);
   },
-  createEmployee: (employee: Partial<Employee>) =>
-    request<Employee>('/employees', {
-      method: 'POST',
-      body: JSON.stringify(employee),
-    }),
-  updateEmployee: (id: number, updates: Partial<Employee>) =>
-    request<Employee>(`/employees/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(updates),
-    }),
+  createEmployee: async (employee: Partial<Employee>): Promise<Employee> =>
+    toEmployee(await request<any>('/employees', { method: 'POST', body: JSON.stringify(employee) })),
+  updateEmployee: async (employeeId: string, updates: Partial<Employee>): Promise<Employee> =>
+    toEmployee(await request<any>(`/employees/${encodeURIComponent(employeeId)}`, { method: 'PATCH', body: JSON.stringify(updates) })),
   bulkImportEmployees: (records: any[]) =>
     request<{ status: string; imported_count: number; duplicates_skipped: number; errors: string[] }>(
       '/employees/import',
