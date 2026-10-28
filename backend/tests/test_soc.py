@@ -1,6 +1,7 @@
 """The tiered SOC: L1 and L2 run on their own; L3 is where people decide."""
 import json
 from datetime import datetime, timedelta
+from app.models import naive_utc_now
 
 import pytest
 
@@ -8,6 +9,7 @@ from app.models import (
     AgentRun, BlocklistEntry, DecisionRequest, DetectionRule, Incident, NotificationDelivery, SecurityEvent,
 )
 from app.services import soc_automation as soc
+from tests.conftest import wipe_soc
 
 API = "/api/v1"
 ATTACKER = "45.155.205.233"
@@ -16,15 +18,13 @@ VICTIM = "priya.s@enterprise-corp.com"
 
 @pytest.fixture(autouse=True)
 def clean(db):
-    for model in (AgentRun, DecisionRequest, DetectionRule, BlocklistEntry, SecurityEvent, Incident):
-        db.query(model).delete()
-    db.commit()
+    wipe_soc(db)
     yield
 
 
 def ev(db, eid, category, risk, *, ip=None, user=None, dest=None, source="Zetaris / auth logs", minutes_ago=5, domain=None):
     sev = "Critical" if risk >= 85 else "High" if risk >= 65 else "Medium" if risk >= 35 else "Low"
-    row = SecurityEvent(event_id=eid, timestamp=datetime.utcnow() - timedelta(minutes=minutes_ago), event_source=source,
+    row = SecurityEvent(event_id=eid, timestamp=naive_utc_now() - timedelta(minutes=minutes_ago), event_source=source,
                         threat_category=category, risk_score=risk, severity=sev, source_ip=ip, dest_ip=dest, user_account=user,
                         domain=domain, evidence=f"{category} evidence", recommended_action="act")
     db.add(row)

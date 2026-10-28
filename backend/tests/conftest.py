@@ -14,8 +14,11 @@ os.environ.update({
     "RATE_LIMIT_LOGIN_PER_MINUTE": "1000",
     "ALERT_SOC_EMAILS": '["soc@example.org"]',
 })
+# Set TEST_DATABASE_URL (a postgresql:// URL) to run the whole suite against PostgreSQL instead of SQLite.
 for var in ("DATABASE_URL", "SUPABASE_DATABASE_URL"):
     os.environ.pop(var, None)
+if os.environ.get("TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
 
 import pytest
 from fastapi.testclient import TestClient
@@ -105,3 +108,13 @@ def employee():
 def client(analyst):
     """Default authenticated client for feature tests."""
     return analyst
+
+
+def wipe_soc(db):
+    """Empty events, incidents and everything that references them, in foreign-key order (PostgreSQL enforces it)."""
+    from app.models import (AgentRun, BlocklistEntry, DecisionRequest, DetectionRule, Incident, IncidentEvidence,
+                            InvestigationNote, ResponseAction, SecurityEvent)
+    for model in (ResponseAction, InvestigationNote, IncidentEvidence, SecurityEvent, AgentRun, DecisionRequest,
+                  DetectionRule, BlocklistEntry, Incident):
+        db.query(model).delete(synchronize_session=False)
+    db.commit()

@@ -198,10 +198,10 @@ def get_employee_security_events(employee_id: str, db: Session = Depends(get_db)
     if not emp:
         raise HTTPException(status_code=404, detail=f"Employee '{employee_id}' not found.")
 
-    events = db.query(SecurityEvent).filter(
-        (SecurityEvent.employee_id == emp.employee_id) |
-        (SecurityEvent.user_account.ilike(f"%{emp.company_email}%")) |
-        (SecurityEvent.user_account.ilike(f"%{emp.full_name.split()[0]}%"))
-    ).order_by(SecurityEvent.timestamp.desc()).all()
+    conditions = (SecurityEvent.employee_id == emp.employee_id) | (SecurityEvent.user_account.ilike(f"%{emp.company_email}%"))
+    first_name = (emp.full_name or "").split()
+    if first_name:
+        conditions = conditions | SecurityEvent.user_account.ilike(f"%{first_name[0]}%")
+    events = db.query(SecurityEvent).filter(conditions).order_by(SecurityEvent.timestamp.desc()).all()
 
     return events

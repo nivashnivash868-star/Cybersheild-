@@ -68,20 +68,24 @@ class UserAdminUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
 
 class EmployeeCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     employee_id: str = Field(..., min_length=3, max_length=64, description="Unique employee identifier e.g. EMP-1042")
     full_name: str = Field(..., min_length=2, max_length=128)
     company_email: str = Field(..., max_length=255)
-    phone_number: Optional[str] = None
+    phone_number: Optional[str] = Field(None, max_length=64)
     department: str = Field(..., min_length=2, max_length=128)
     role_title: str = Field(..., min_length=2, max_length=128)
-    monitoring_policy: str = Field(default="Standard Workstation", description="Standard Workstation, Executive High-Risk, DevOps & Cloud Admin, Contractor Strict")
+    monitoring_policy: str = Field(default="Standard Workstation", max_length=128, description="Standard Workstation, Executive High-Risk, DevOps & Cloud Admin, Contractor Strict")
 
 class EmployeeUpdateRequest(BaseModel):
-    full_name: Optional[str] = None
-    phone_number: Optional[str] = None
-    department: Optional[str] = None
-    role_title: Optional[str] = None
-    monitoring_policy: Optional[str] = None
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    full_name: Optional[str] = Field(None, min_length=2, max_length=128)
+    phone_number: Optional[str] = Field(None, max_length=64)
+    department: Optional[str] = Field(None, min_length=2, max_length=128)
+    role_title: Optional[str] = Field(None, min_length=2, max_length=128)
+    monitoring_policy: Optional[str] = Field(None, min_length=2, max_length=128)
     is_active: Optional[bool] = None
 
 class EmployeeResponse(BaseModel):

@@ -2,6 +2,7 @@
 import json
 import re
 from datetime import datetime, timedelta
+from app.models import naive_utc_now
 
 import pytest
 
@@ -11,7 +12,7 @@ from app.models import (
     UserSession,
 )
 from app.services import soc_automation as soc
-from tests.conftest import ACCOUNTS, login, make_client
+from tests.conftest import ACCOUNTS, login, make_client, wipe_soc
 
 API = "/api/v1"
 STRONG = "Activated-Password-2026-zz"
@@ -95,7 +96,7 @@ def test_the_overview_says_when_the_data_is_simulated(admin):
 def test_simulated_events_are_flagged_on_the_event_itself(analyst, db):
     seeded = db.query(SecurityEvent).filter(SecurityEvent.is_simulated.is_(True)).first()
     assert analyst.get(f"{API}/events/{seeded.event_id}").json()["event"]["is_simulated"] is True
-    real = SecurityEvent(event_id="REAL-1", timestamp=datetime.utcnow(), event_source="x", threat_category="Port Scan", risk_score=70,
+    real = SecurityEvent(event_id="REAL-1", timestamp=naive_utc_now(), event_source="x", threat_category="Port Scan", risk_score=70,
                          severity="High", evidence="e", recommended_action="a", is_simulated=False)
     db.add(real)
     db.commit()
@@ -122,7 +123,7 @@ def test_thresholds_are_validated_audited_and_applied(admin, db):
     assert db.query(AuditLog).filter(AuditLog.action == "SECURITY_SETTING_CHANGED", AuditLog.resource_id == "l1_low_risk_threshold").count() == 1
 
     db.query(SecurityEvent).filter(SecurityEvent.event_id == "TH-1").delete()
-    db.add(SecurityEvent(event_id="TH-1", timestamp=datetime.utcnow(), event_source="t", threat_category="Odd Login", risk_score=40,
+    db.add(SecurityEvent(event_id="TH-1", timestamp=naive_utc_now(), event_source="t", threat_category="Odd Login", risk_score=40,
                          severity="Medium", user_account="t@x.co", evidence="e", recommended_action="a"))
     db.commit()
     soc.run_l1(db)
@@ -150,8 +151,7 @@ def test_the_permission_matrix_and_integrations_are_visible_to_administrators(se
 # --- analyst workflow ---------------------------------------------------------------------------------------------------
 @pytest.fixture
 def critical_incident(db):
-    for m in (DecisionRequest, ResponseAction, Incident):
-        db.query(m).delete()
+    wipe_soc(db)
     db.query(SecurityEvent).filter(SecurityEvent.event_id.like("CI-%")).delete(synchronize_session=False)
     inc = Incident(incident_id="INC-TEST-CRIT", title="Critical test", description="d", threat_category="Phishing", severity="Critical", risk_score=95, status="Investigating")
     db.add(inc)
@@ -187,8 +187,7 @@ def test_closing_lower_severity_incidents_needs_no_approval_and_admins_close_cri
 
 
 def test_disabling_an_account_and_isolating_a_host_need_an_administrator(analyst, admin, db):
-    for m in (DecisionRequest, ResponseAction, Incident):
-        db.query(m).delete()
+    wipe_soc(db)
     victim = User(email="victim.user@company.com", full_name="Victim", role="Employee", hashed_password="x")
     db.add(victim)
     db.commit()
@@ -214,10 +213,9 @@ def test_disabling_an_account_and_isolating_a_host_need_an_administrator(analyst
 
 
 def test_l2_asks_for_account_and_host_decisions_instead_of_doing_them(db):
-    for m in (DecisionRequest, ResponseAction, Incident):
-        db.query(m).delete()
+    wipe_soc(db)
     db.query(SecurityEvent).filter(SecurityEvent.event_id.like("AA-%")).delete(synchronize_session=False)
-    now = datetime.utcnow()
+    now = naive_utc_now()
     rows = [("AA-1", "Phishing / Critical Risk", 95, None, "priya@enterprise-corp.com", None, now - timedelta(hours=5), "Email Gateway"),
             ("AA-2", "Account Compromise Suspected", 95, "45.155.205.233", "priya@enterprise-corp.com", None, now - timedelta(hours=2), "Auth"),
             ("AA-3", "Unexpected Traffic Spike / Exfiltration", 92, "10.20.4.37", "priya@enterprise-corp.com", "185.220.101.47", now - timedelta(hours=1), "Network")]
@@ -261,7 +259,7 @@ def test_the_analyst_list_is_for_staff_only(employee, anon):
 
 def test_event_detail_gives_related_alerts_a_timeline_and_the_automation_trail(analyst, db):
     db.query(SecurityEvent).filter(SecurityEvent.event_id.like("DT-%")).delete(synchronize_session=False)
-    now = datetime.utcnow()
+    now = naive_utc_now()
     for i, (cat, mins) in enumerate([("Port Scan", 90), ("Brute Force", 60), ("Exfiltration", 30)]):
         db.add(SecurityEvent(event_id=f"DT-{i}", timestamp=now - timedelta(minutes=mins), event_source="s", threat_category=cat, risk_score=80,
                              severity="High", source_ip="45.9.9.9", evidence="e", recommended_action="a"))
@@ -276,7 +274,7 @@ def test_event_detail_gives_related_alerts_a_timeline_and_the_automation_trail(a
 
 def test_critical_alerts_panel_lists_open_high_severity_alerts_unacknowledged_first(analyst, db):
     db.query(SecurityEvent).filter(SecurityEvent.event_id.like("CA-%")).delete(synchronize_session=False)
-    now = datetime.utcnow()
+    now = naive_utc_now()
     specs = [("CA-1", "Critical", False, "Analyzed"), ("CA-2", "High", True, "Analyzed"), ("CA-3", "Low", False, "Analyzed"), ("CA-4", "Critical", False, "Closed")]
     for eid, sev, ack, status in specs:
         db.add(SecurityEvent(event_id=eid, timestamp=now, event_source="s", threat_category="x", risk_score=90, severity=sev,

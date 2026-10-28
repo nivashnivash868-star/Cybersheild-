@@ -59,18 +59,34 @@ def configured_sources() -> List[str]:
                            ("email", settings.ZETARIS_TABLE_EMAIL)) if t]
 
 
+_TIME_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?\s*(Z|[+-]\d{2}:?\d{2})?$")
+
+
 def parse_time(value: Any) -> Optional[datetime]:
-    """Naive UTC datetime from the formats Zetaris/Spark/Trino return."""
+    """Naive UTC datetime from the formats Zetaris/Spark/Trino return, including '2026-10-28 10:13:12.0' (any number
+    of fractional digits), ISO strings with 'T' or 'Z', and epoch seconds/milliseconds. Spark's timestamps carry no
+    zone and are taken as UTC, which is what the JVM in the Zetaris container uses."""
     if value is None:
         return None
     if isinstance(value, (int, float)):
         return datetime.fromtimestamp(value / 1000 if value > 1e11 else value, tz=timezone.utc).replace(tzinfo=None)
-    text = str(value).strip().replace("Z", "+00:00")
+    text = str(value).strip()
+    if re.fullmatch(r"\d{9,13}(\.\d+)?", text):
+        return parse_time(float(text))
+    m = _TIME_RE.match(text)
+    if not m:
+        return None
+    y, mo, d, h, mi, sec, frac, tz = m.groups()
+    micro = int((frac or "0")[:6].ljust(6, "0"))
     try:
-        dt = datetime.fromisoformat(text)
+        dt = datetime(int(y), int(mo), int(d), int(h), int(mi), int(sec), micro)
     except ValueError:
         return None
-    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+    if tz and tz != "Z":
+        sign = 1 if tz[0] == "+" else -1
+        digits = tz[1:].replace(":", "")
+        dt -= sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:4]))
+    return dt
 
 
 def severity_for(score: int) -> str:

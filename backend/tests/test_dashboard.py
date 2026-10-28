@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
+from app.models import naive_utc_now
 
 import pytest
 
 from app.database import SessionLocal
 from app.models import Incident, SecurityEvent
 from app.services.demo_data_seeder import seed_demo_soc_data
+from tests.conftest import wipe_soc
 
 API = "/api/v1"
 
@@ -18,15 +20,13 @@ def _restore_seed():
 
 
 def _event(db, eid, minutes_ago, category, score, severity):
-    db.add(SecurityEvent(event_id=eid, timestamp=datetime.utcnow() - timedelta(minutes=minutes_ago), event_source="test",
+    db.add(SecurityEvent(event_id=eid, timestamp=naive_utc_now() - timedelta(minutes=minutes_ago), event_source="test",
                          threat_category=category, risk_score=score, severity=severity, evidence="e",
                          recommended_action="a"))
 
 
 def test_timeline_has_no_invented_floor(db, analyst):
-    db.query(SecurityEvent).delete()
-    db.query(Incident).delete()
-    db.commit()
+    wipe_soc(db)
     points = analyst.get(f"{API}/dashboard/activity-timeline").json()
     assert len(points) == 7
     assert all(p["total_events"] == 0 and p["threats"] == 0 and p["phishing"] == 0 and p["network"] == 0 for p in points)

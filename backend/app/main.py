@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy.exc import DataError, IntegrityError
 from app.bootstrap import bootstrap_admin
 from app.config import settings
 from app.database import engine, Base, SessionLocal
@@ -61,6 +62,19 @@ app = FastAPI(
     redoc_url=None if settings.is_production else "/redoc",
     openapi_url=None if settings.is_production else "/openapi.json",
 )
+
+@app.exception_handler(DataError)
+async def _data_error(request: Request, exc: DataError):
+    """A value the database refused (too long, wrong type). The caller sent bad data: that is a 422, not a crash."""
+    logger.warning("Rejected oversized or malformed value on %s %s: %s", request.method, request.url.path, type(exc.orig).__name__)
+    return JSONResponse(status_code=422, content={"detail": "A value is too long or in the wrong format."})
+
+
+@app.exception_handler(IntegrityError)
+async def _integrity_error(request: Request, exc: IntegrityError):
+    logger.warning("Integrity conflict on %s %s: %s", request.method, request.url.path, type(exc.orig).__name__)
+    return JSONResponse(status_code=409, content={"detail": "This conflicts with data that already exists."})
+
 
 # CORS: only explicitly configured origins (the bundled UI is same-origin and needs none).
 if settings.CORS_ORIGINS:

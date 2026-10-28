@@ -337,3 +337,21 @@ def test_statistical_outliers_are_left_out_unless_opted_in(fake, configured, cle
         fake.add_flow(20 - i, f"10.20.3.{10 + i}", "93.184.216.34", 443, nbytes=95_000, packets=95)
     with client_for(fake) as c:
         assert zetaris_ingest.run_ingest(db, c)["events_created"] == 0
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("2026-10-28 10:13:12.0", "2026-10-28 10:13:12"),              # what a real Zetaris/Spark returns
+    ("2026-10-28 10:13:12", "2026-10-28 10:13:12"),
+    ("2026-10-28 10:13:12.5", "2026-10-28 10:13:12.500000"),
+    ("2026-10-28T10:13:12.123Z", "2026-10-28 10:13:12.123000"),
+    ("2026-10-28 10:13:12.123456789", "2026-10-28 10:13:12.123456"),
+    ("2026-10-28T15:43:12+05:30", "2026-10-28 10:13:12"),         # offsets are converted to UTC
+    ("1793182392000", "2026-10-28 10:13:12"),                      # epoch milliseconds
+])
+def test_timestamps_in_every_format_zetaris_returns_are_understood(raw, expected):
+    assert str(zetaris_ingest.parse_time(raw)).replace(".000000", "") == expected.replace(".000000", "")
+
+
+@pytest.mark.parametrize("raw", [None, "", "not a time", "2026-13-45 99:99:99"])
+def test_unparseable_timestamps_are_none_not_errors(raw):
+    assert zetaris_ingest.parse_time(raw) is None

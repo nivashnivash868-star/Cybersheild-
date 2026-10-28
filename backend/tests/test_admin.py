@@ -1,3 +1,4 @@
+import pytest
 from app.models import NotificationDelivery, naive_utc_now
 from app.services.outbox import enqueue_email
 
@@ -65,3 +66,23 @@ def test_super_admin_user_lifecycle(admin, db):
     assert admin.post(f"{API}/users/{uid}/revoke-sessions").status_code == 200
     me = next(u for u in admin.get(f"{API}/users").json() if u["email"] == "admin@cybershield.corp")
     assert admin.patch(f"{API}/users/{me['id']}", json={"is_active": False}).status_code == 409   # can't lock yourself out
+
+
+# --- regressions found by fuzzing -------------------------------------------------------------------------------------
+@pytest.mark.parametrize("bad", [{"full_name": ""}, {"full_name": " "}, {"full_name": "x" * 500}, {"department": ""},
+                                 {"role_title": " "}, {"phone_number": "9" * 200}, {"monitoring_policy": ""}])
+def test_employee_updates_are_validated(admin, bad):
+    assert admin.patch(f"{API}/employees/EMP-1042", json=bad).status_code == 422
+
+
+def test_employee_events_survive_an_awkward_name(admin, db):
+    from app.models import Employee
+    emp = db.query(Employee).filter(Employee.employee_id == "EMP-1042").one()
+    original = emp.full_name
+    emp.full_name = ""                                  # data that predates validation
+    db.commit()
+    try:
+        assert admin.get(f"{API}/employees/EMP-1042/events").status_code == 200
+    finally:
+        emp.full_name = original
+        db.commit()

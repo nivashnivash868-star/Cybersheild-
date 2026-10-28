@@ -9,6 +9,7 @@ import re
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
+from app.models import naive_utc_now
 
 import httpx
 
@@ -18,7 +19,7 @@ USER, PASSWORD, ID_TOKEN = "svc", "pw", "idtoken-1"
 
 
 def ts(minutes_ago: int) -> str:
-    return (datetime.utcnow() - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%d %H:%M:%S")
+    return (naive_utc_now() - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 ATTACKER = "45.155.205.233"
@@ -130,8 +131,22 @@ class FakeZetaris:
             return httpx.Response(200)
         return self._json(404, {"msg": "not found"})
 
+    @staticmethod
+    def _like_zetaris(row: dict) -> dict:
+        """A real Zetaris returns every value as a string, and Spark timestamps carry a '.0' fraction."""
+        out = {}
+        for k, v in row.items():
+            if v is None:
+                out[k] = None
+            elif isinstance(v, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", v):
+                out[k] = v + ".0"
+            else:
+                out[k] = str(v)
+        return out
+
     def _page(self, token: str, page: int) -> dict:
         rows, limit = self.cursors[token]
+        rows = [self._like_zetaris(r) for r in rows]
         total_pages = max(1, -(-len(rows) // limit))
         return {"records": rows[page * limit:(page + 1) * limit], "pageNumber": page, "pageLimit": limit,
                 "totalCount": len(rows), "totalPages": total_pages, "queryToken": token}
