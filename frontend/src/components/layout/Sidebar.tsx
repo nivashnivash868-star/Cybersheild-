@@ -32,6 +32,10 @@ export type NavTab =
   | 'reports'
   | 'notifications'
   | 'blocklist'
+  | 'zetaris'
+  | 'administration'
+  | 'soc_ops'
+  | 'admin_overview'
   | 'settings'
   | 'system';
 
@@ -55,11 +59,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isOpenMobile = false,
   onCloseMobile,
 }) => {
+  const isEmployee = userRole === 'Employee';
+  const staff = !isEmployee;
+  const isAdmin = userRole === 'Super Admin' || userRole === 'Security Administrator';
   const [monitoringExpanded, setMonitoringExpanded] = useState(true);
   const [threatsExpanded, setThreatsExpanded] = useState(true);
 
   const isTabActive = (tab: NavTab) => {
     if (currentTab === tab) return true;
+    if (tab === 'incidents' && (currentTab === 'soc_analyst' || currentTab === 'incident_detail')) return true;
     if (tab === 'overview' && currentTab === 'dashboard') return true;
     if (tab === 'secrets' && currentTab === 'dlp') return true;
     if (tab === 'employee_dashboard' && currentTab === 'employee_portal') return true;
@@ -104,7 +112,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {/* Navigation Menu Matching User's Exact Mockup */}
           <div className="p-3 space-y-1">
+            {isAdmin && (
+              <button
+                onClick={() => handleNav('admin_overview')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
+                  currentTab === 'admin_overview'
+                    ? 'bg-sky-50 dark:bg-sky-600/20 text-sky-700 dark:text-sky-300 font-semibold'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                <span>Admin Overview</span>
+              </button>
+            )}
+
             {/* 1. Overview (Dashboard) */}
+            {staff && (
+            <>
             <button
               onClick={() => handleNav('overview')}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
@@ -116,6 +140,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <LayoutDashboard className="w-4 h-4 text-slate-500 dark:text-slate-400" />
               <span>Overview</span>
             </button>
+
+            </>
+            )}
 
             {/* 2. Employees */}
             {(userRole === 'Super Admin' || userRole === 'Security Administrator') && (
@@ -133,6 +160,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
 
             {/* 3. Monitoring Center (Expandable) */}
+            {staff && (
+            <>
             <div>
               <button
                 onClick={() => {
@@ -202,7 +231,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </div>
 
+            </>
+            )}
+
             {/* 4. Threat Detection (Expandable) */}
+            {staff && (
+            <>
             <div>
               <button
                 onClick={() => {
@@ -272,7 +306,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </div>
 
+            </>
+            )}
+
+            {staff && (
+              <button
+                onClick={() => handleNav('soc_ops')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
+                  currentTab === 'soc_ops'
+                    ? 'bg-sky-50 dark:bg-sky-600/20 text-sky-700 dark:text-sky-300 font-semibold'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                <Activity className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                <span>SOC Operations</span>
+              </button>
+            )}
+
             {/* 5. Secret Detection (Screen 6) */}
+            {staff && (
+            <>
             <button
               onClick={() => handleNav('secrets')}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition ${
@@ -290,7 +343,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             </button>
 
+            </>
+            )}
+
             {/* 6. Threat Alerts / Incidents (Screen 10) */}
+            {staff && (
+            <>
             <button
               onClick={() => handleNav('incidents')}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition ${
@@ -301,7 +359,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-3">
                 <AlertTriangle className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                <span>Incidents</span>
+                <span>Incident Management</span>
               </div>
               {openIncidentsCount > 0 && (
                 <span className="text-[10px] bg-red-500 text-white font-bold px-1.5 py-0.2 rounded-full">
@@ -310,20 +368,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </button>
 
-            {/* 7. SOC Analyst (Screen 8) */}
-            <button
-              onClick={() => handleNav('soc_analyst')}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
-                currentTab === 'soc_analyst'
-                  ? 'bg-sky-50 dark:bg-sky-600/20 text-sky-700 dark:text-sky-300 font-semibold'
-                  : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              <UserCheck className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-              <span>SOC Analyst</span>
-            </button>
+            </>
+            )}
 
             {/* 8. Digital Forensics */}
+            {staff && (
+            <>
             <button
               onClick={() => handleNav('forensics')}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
@@ -336,7 +386,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>Digital Forensics</span>
             </button>
 
+            </>
+            )}
+
             {/* 9. Employee Dashboard (Screen 9) */}
+            {isEmployee && (
+            <>
             <button
               onClick={() => handleNav('employee_dashboard')}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
@@ -348,6 +403,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <ShieldCheck className="w-4 h-4 text-slate-500 dark:text-slate-400" />
               <span>My Dashboard</span>
             </button>
+
+            </>
+            )}
 
             {/* 10. URL Warning Page (Screen 7) */}
             <button
@@ -363,6 +421,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
 
             {/* 11. Reports & Analytics (Screen 11) */}
+            {staff && (
+            <>
             <button
               onClick={() => handleNav('reports')}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
@@ -375,8 +435,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>Reports</span>
             </button>
 
+            {staff && (
+              <button
+                onClick={() => handleNav('zetaris')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
+                  currentTab === 'zetaris'
+                    ? 'bg-sky-50 dark:bg-sky-600/20 text-sky-700 dark:text-sky-300 font-semibold'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                <Network className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                <span>Data Sources (Zetaris)</span>
+              </button>
+            )}
+
+            </>
+            )}
+
             {/* Blocklist: the prevention control. Staff only. */}
-            {userRole !== 'Employee' && (
+            {staff && (
               <button
                 onClick={() => handleNav('blocklist')}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
@@ -391,6 +468,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
 
             {/* 12. Notifications (Screen 12) */}
+            {staff && (
+            <>
             <button
               onClick={() => handleNav('notifications')}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
@@ -402,6 +481,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Bell className="w-4 h-4 text-slate-500 dark:text-slate-400" />
               <span>Notifications</span>
             </button>
+
+            </>
+            )}
+
+            {isAdmin && (
+              <button
+                onClick={() => handleNav('administration')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
+                  currentTab === 'administration'
+                    ? 'bg-sky-50 dark:bg-sky-600/20 text-sky-700 dark:text-sky-300 font-semibold'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                <span>Administration</span>
+              </button>
+            )}
 
             {/* 13. Settings (Screen 13) */}
             <button

@@ -38,3 +38,7 @@ yarn-debug.log*
 .vscode/
 *.swp
 *.swo
+
+# Synthetic data written by backend/scripts/generate_synthetic_logs.py
+backend/data/
+data/synthetic/

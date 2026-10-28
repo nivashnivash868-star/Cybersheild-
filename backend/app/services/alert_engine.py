@@ -4,6 +4,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import AuditLog, Employee, NotificationDelivery, naive_utc_now
+from app.services import settings_store
 from app.services.outbox import enqueue_email, enqueue_sms
 
 DEDUP_WINDOW_MINUTES = 15
@@ -37,6 +38,10 @@ class AlertEngine:
         Nothing is sent inline: the outbox worker delivers and records the real provider outcome.
         """
         deliveries: List[NotificationDelivery] = []
+        rank = settings_store.SEVERITY_RANK
+        if rank.get(severity, 0) < rank[settings_store.get(db, "alert_min_severity")]:
+            return deliveries   # below the administrator's alerting threshold: the event is still recorded, nobody is paged
+        sms_ok = rank.get(severity, 0) >= rank[settings_store.get(db, "sms_min_severity")]
         dedup_raw = f"{title}:{target_employee_email or 'global'}:{incident_id or event_id or 'none'}"
         dedup_key = hashlib.sha256(dedup_raw.encode("utf-8")).hexdigest()
         common = dict(severity=severity, incident_id=incident_id, event_id=event_id, dedup_key=dedup_key)
@@ -62,7 +67,7 @@ class AlertEngine:
                                     status="NOT_CONFIGURED", **common)
                 row.last_error = "ALERT_SOC_EMAILS is empty: no SOC recipient is configured."
                 deliveries.append(row)
-            if severity == "Critical":
+            if sms_ok and severity == "Critical":
                 for number in settings.ALERT_SOC_SMS:
                     queue_sms(number, "SOC_ANALYST", f"CYBERSHIELD CRITICAL: {title}"[:300])
 
@@ -72,7 +77,7 @@ class AlertEngine:
                 target_employee_email, "EMPLOYEE", f"Security advisory: {title}",
                 f"{sanitized_summary}\n\nWhat to do: open the CYBERSHIELD employee portal and follow the advisory.",
             )
-            if severity in ("Critical", "High") and emp and emp.phone_number:
+            if sms_ok and emp and emp.phone_number:
                 queue_sms(emp.phone_number, "EMPLOYEE",
                           f"CYBERSHIELD: security notice - {title}. Check your work email."[:300])
 

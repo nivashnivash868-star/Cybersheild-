@@ -18,7 +18,7 @@ from app.worker import run_forever
 from app.routers import (
     dashboard, phishing, file_analysis, network,
     incidents, forensics, events, system,
-    auth, employees, monitoring, dlp, url_warning, alerts, users, blocklist, feeds
+    auth, employees, monitoring, dlp, url_warning, alerts, users, blocklist, feeds, zetaris, soc, admin
 )
 
 # Configure logging
@@ -73,8 +73,9 @@ if settings.CORS_ORIGINS:
     )
 
 _CSP = (
-    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
-    "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    "default-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+    "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
 
 
@@ -111,6 +112,9 @@ api_routers = [
     (feeds.router, []),                      # feed-token auth
     (users.router, []),                      # Super Admin per route
     (blocklist.router, []),                  # per route
+    (zetaris.router, []),                    # per route
+    (soc.router, []),                        # per route
+    (admin.router, []),                      # administrators only (per route)
     (employees.router, _ANY_USER),           # staff-only except an employee's own events (per route)
     (monitoring.router, _STAFF), (dlp.router, _STAFF), (alerts.router, _STAFF), (dashboard.router, _STAFF),
     (file_analysis.router, _STAFF), (network.router, _STAFF), (incidents.router, _STAFF),

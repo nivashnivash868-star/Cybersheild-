@@ -75,6 +75,31 @@ class Settings(BaseSettings):
     BLOCKLIST_MAX_TTL_HOURS: int = 24 * 30
     BLOCKLIST_PROTECTED: List[str] = []  # extra CIDRs / domains that may never be blocked
 
+    # Zetaris: federated queries over your log/data sources (https://api.saas.enterprise.zetaris.com/redoc/)
+    ZETARIS_BASE_URL: str = "https://api.saas.enterprise.zetaris.com"
+    ZETARIS_ORG_ID: Optional[int] = None
+    ZETARIS_API_KEY: Optional[str] = None       # Bearer token for the query APIs
+    ZETARIS_USERNAME: Optional[str] = None      # optional: log in for an idToken when no API key is set
+    ZETARIS_PASSWORD: Optional[str] = None
+    ZETARIS_INGEST_ENABLED: bool = True
+    ZETARIS_INGEST_INTERVAL_SECONDS: int = 60
+    ZETARIS_INITIAL_LOOKBACK_HOURS: int = 72    # how far back the first ingest looks
+    ZETARIS_BRUTE_FORCE_THRESHOLD: int = 5      # failed logins per (ip, user) in one pass
+    ZETARIS_LOW_SIGNAL_THRESHOLD: int = 3       # smaller bursts become Low alerts for L1 to close (0 disables)
+    ZETARIS_DATA_IS_SYNTHETIC: bool = False     # mark everything read from Zetaris as SIMULATED in the UI
+    ZETARIS_BATCH_ROWS: int = 2000
+    ZETARIS_MAX_BATCHES_PER_PASS: int = 10
+    # The Isolation Forest is trained on a tiny fixed sample and flags ordinary traffic; its Medium "statistical
+    # outlier" alerts are left out of ingestion unless you opt in. Rule-based detections (scans, exfiltration, ...) stay.
+    ZETARIS_NETWORK_INCLUDE_ML_OUTLIERS: bool = False
+    ZETARIS_INTERNAL_FAILURE_MULTIPLIER: int = 4  # typos from private addresses need this many times more failures
+    # Table names as Zetaris sees them (database.table). Column names default to the schema in
+    # docs/zetaris-schema.md and can be overridden with ZETARIS_COLUMNS='{"auth": {"event_time": "ts"}}'.
+    ZETARIS_TABLE_AUTH: Optional[str] = None
+    ZETARIS_TABLE_NETWORK: Optional[str] = None
+    ZETARIS_TABLE_EMAIL: Optional[str] = None
+    ZETARIS_COLUMNS: dict = {}
+
     # External reputation integrations (keys only; clients are not implemented yet)
     VIRUSTOTAL_API_KEY: Optional[str] = None
     PHISHTANK_API_KEY: Optional[str] = None
@@ -101,6 +126,11 @@ class Settings(BaseSettings):
         if self.MFA_ENFORCED is not None:
             return self.MFA_ENFORCED
         return not self.is_development
+
+    @property
+    def zetaris_configured(self) -> bool:
+        has_auth = bool(self.ZETARIS_API_KEY or (self.ZETARIS_USERNAME and self.ZETARIS_PASSWORD))
+        return bool(self.ZETARIS_ORG_ID is not None and has_auth)
 
     @property
     def database_url(self) -> Optional[str]:

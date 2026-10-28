@@ -49,6 +49,11 @@ def get_full_system_status(db: Session = Depends(get_db), _: User = Depends(requ
             "status": (f"{active_blocks} active entries; {len(pulled)}/{len(consumers)} consumers have pulled the feed"
                        if consumers else "No feed consumer registered: blocks are not enforced anywhere yet"),
         },
+        "zetaris": {
+            "configured": settings.zetaris_configured,
+            "status": ("Configured; see /zetaris/status for a live connection check" if settings.zetaris_configured
+                       else "Not configured: no external data sources are being read"),
+        },
         "virustotal_reputation": {
             "configured": bool(settings.VIRUSTOTAL_API_KEY),
             "status": "Key present, but no client is implemented: no lookups are made",
@@ -98,11 +103,16 @@ class AuditOut(BaseModel):
 
 @router.get("/audit", response_model=List[AuditOut])
 def list_audit(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), action: Optional[str] = None,
-               db: Session = Depends(get_db), _: User = Depends(require_roles(ADMIN_ROLES))):
-    q = db.query(AuditLog)
+               q: Optional[str] = Query(None, max_length=100), db: Session = Depends(get_db),
+               _: User = Depends(require_roles(ADMIN_ROLES))):
+    query = db.query(AuditLog)
     if action:
-        q = q.filter(AuditLog.action == action)
-    return q.order_by(AuditLog.id.desc()).offset(offset).limit(limit).all()
+        query = query.filter(AuditLog.action == action)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(AuditLog.actor.ilike(like) | AuditLog.details.ilike(like) | AuditLog.resource_id.ilike(like)
+                             | AuditLog.action.ilike(like))
+    return query.order_by(AuditLog.id.desc()).offset(offset).limit(limit).all()
 
 
 @router.get("/audit/verify")

@@ -22,7 +22,9 @@ const buttonClass =
 
 export const LoginPage: React.FC<LoginPageProps> = ({ resume, onLoginSuccess }) => {
   const { theme, toggleTheme } = useTheme();
-  const resetToken = new URLSearchParams(window.location.search).get('reset_token');
+  const params = new URLSearchParams(window.location.search);
+  const resetToken = params.get('reset_token');
+  const activating = params.get('activate') === '1';
 
   const [stage, setStage] = useState<Stage>(resetToken ? 'reset' : 'credentials');
   const [email, setEmail] = useState('');
@@ -140,7 +142,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ resume, onLoginSuccess }) 
     mfa_enroll: ['Set up two-step verification', 'Your role requires an authenticator app before you can continue'],
     change_password: ['Choose a new password', 'You must replace your temporary password before continuing'],
     forgot: ['Reset your password', "We'll email you a link that works once, for 30 minutes"],
-    reset: ['Choose a new password', 'Pick a password you do not use anywhere else'],
+    reset: activating
+      ? ['Activate your account', 'Choose a password to finish setting up your CYBERSHIELD AI account']
+      : ['Choose a new password', 'Pick a password you do not use anywhere else'],
   };
 
   return (
@@ -307,7 +311,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ resume, onLoginSuccess }) 
                 {field('New password (12+ characters)', <Lock className="w-4 h-4" />,
                   <input type="password" required minLength={12} autoComplete="new-password" value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)} className={inputClass} />)}
-                {submit('Set new password')}
+                {submit(activating ? 'Activate account' : 'Set new password')}
               </form>
             )}
           </div>

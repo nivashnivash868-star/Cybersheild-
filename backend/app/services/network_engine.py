@@ -38,7 +38,7 @@ class NetworkAnomalyDetector:
         self.iso_forest = IsolationForest(contamination=0.15, random_state=42)
         self.iso_forest.fit(nominal_traffic)
 
-    def analyze_batch(self, records: List[NetworkRecordInput]) -> NetworkAnalysisBatchResponse:
+    def analyze_batch(self, records: List[NetworkRecordInput], include_ml: bool = True) -> NetworkAnalysisBatchResponse:
         alerts: List[NetworkAnomalyAlert] = []
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -162,6 +162,9 @@ class NetworkAnomalyDetector:
                     engine="Known Threat Port Heuristic"
                 ))
                 analyzed_indices.add(id(rec))
+                continue
+
+            if not include_ml:
                 continue
 
             # Scikit-learn Isolation Forest ML Anomaly Check

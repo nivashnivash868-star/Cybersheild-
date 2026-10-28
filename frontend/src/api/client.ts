@@ -2,7 +2,7 @@ import {
   DashboardMetrics, ThreatSeverityDistribution, ActivityDataPoint,
   SecurityEvent, PhishingAnalysisResult, FileAnalysisResult,
   NetworkAnalysisBatchResult, IncidentDetail, ForensicInvestigation,
-  SystemStatusData, UserSession, SessionState, BlocklistEntry, FeedTokenInfo, Employee, MonitoringSource,
+  SystemStatusData, UserSession, SessionState, BlocklistEntry, FeedTokenInfo, ZetarisStatus, ZetarisIngestReport, Investigation, CategoryCount, AdminUser, AuditEntry, SocOverview, AgentRun, DecisionRequest, DetectionRule, AdminOverview, SettingDef, PermissionRow, IntegrationRow, Assignable, EventDetail, Employee, MonitoringSource,
   SecretFinding, NotificationDelivery, URLInspectionResult
 } from '../types';
 
@@ -93,6 +93,9 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   logout: () => request<{ status: string }>('/auth/logout', { method: 'POST' }),
+  logoutAll: () => request<{ status: string; sessions_revoked: number }>('/auth/logout-all', { method: 'POST' }),
+  mfaDisable: (password: string, code: string) =>
+    request<{ status: string }>('/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password, code }) }),
   forgotPassword: (email: string) =>
     request<{ status: string; message: string }>('/auth/forgot-password', {
       method: 'POST',
@@ -103,6 +106,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  // Zetaris (federated data sources)
+  getZetarisStatus: () => request<ZetarisStatus>('/zetaris/status'),
+  runZetarisIngest: () => request<ZetarisIngestReport>('/zetaris/ingest/run', { method: 'POST' }),
+  zetarisInvestigate: (indicator: string) =>
+    request<Investigation>(`/zetaris/investigate?indicator=${encodeURIComponent(indicator)}`),
 
   // Blocklist (prevention)
   getBlocklist: (status?: string) =>
@@ -191,12 +200,59 @@ export const api = {
     }),
 
   // Automated Alerts & Notification Deliveries
-  getNotificationDeliveries: (params?: { recipient_type?: string; limit?: number }) => {
+  getNotificationDeliveries: (params?: { recipient_type?: string; channel?: string; status?: string; q?: string; limit?: number }) => {
     const query = new URLSearchParams();
-    if (params?.recipient_type && params.recipient_type !== 'All') query.set('recipient_type', params.recipient_type);
-    if (params?.limit) query.set('limit', String(params.limit));
+    for (const [k, v] of Object.entries(params ?? {})) {
+      if (v !== undefined && v !== '' && v !== 'All') query.set(k, String(v));
+    }
     return request<NotificationDelivery[]>(`/alerts/deliveries?${query.toString()}`);
   },
+  getDeliverySummary: () => request<Record<string, number>>('/alerts/summary'),
+  retryDelivery: (id: number) => request<{ status: string }>(`/alerts/deliveries/${id}/retry`, { method: 'POST' }),
+
+  // Tiered SOC
+  getSocOverview: () => request<SocOverview>('/soc/overview'),
+  getSocActivity: (tier?: 'L1' | 'L2', limit = 40) =>
+    request<AgentRun[]>(`/soc/activity?limit=${limit}${tier ? `&tier=${tier}` : ''}`),
+  getDecisions: (status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'All' = 'PENDING') =>
+    request<DecisionRequest[]>(`/soc/decisions?status=${status}`),
+  decide: (id: number, decision: 'approve' | 'reject', note?: string) =>
+    request<DecisionRequest>(`/soc/decisions/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, note }) }),
+  getRules: () => request<DetectionRule[]>('/soc/rules'),
+  createRule: (payload: { name: string; kind: string; match: Record<string, string | number>; description?: string }) =>
+    request<DetectionRule>('/soc/rules', { method: 'POST', body: JSON.stringify(payload) }),
+  toggleRule: (id: number, enabled: boolean) =>
+    request<DetectionRule>(`/soc/rules/${id}?enabled=${enabled}`, { method: 'PATCH' }),
+  reopenEvent: (eventId: string) => request<{ status: string }>(`/soc/events/${encodeURIComponent(eventId)}/reopen`, { method: 'POST' }),
+  runSoc: () => request<Record<string, any>>('/soc/run', { method: 'POST' }),
+
+  // Administration
+  getUsers: () => request<AdminUser[]>('/users'),
+  createUser: (payload: { email: string; full_name: string; role: string; department?: string; temporary_password?: string; send_invite?: boolean }) =>
+    request<AdminUser>('/users', { method: 'POST', body: JSON.stringify(payload) }),
+  resendInvite: (id: number) => request<{ status: string }>(`/users/${id}/resend-invite`, { method: 'POST' }),
+  getAssignable: () => request<Assignable[]>('/users/analysts'),
+  getAdminOverview: () => request<AdminOverview>('/admin/overview'),
+  getSecuritySettings: () => request<SettingDef[]>('/admin/settings'),
+  putSecuritySettings: (changes: Record<string, number | string>) =>
+    request<SettingDef[]>('/admin/settings', { method: 'PUT', body: JSON.stringify(changes) }),
+  getPermissions: () => request<PermissionRow[]>('/admin/permissions'),
+  getIntegrations: () => request<IntegrationRow[]>('/admin/integrations'),
+  getCriticalAlerts: (limit = 12) => request<SecurityEvent[]>(`/dashboard/critical-alerts?limit=${limit}`),
+  getEventDetail: (eventId: string) => request<EventDetail>(`/events/${encodeURIComponent(eventId)}`),
+  updateUser: (id: number, payload: { role?: string; is_active?: boolean }) =>
+    request<AdminUser>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  resetUserMfa: (id: number) => request<{ status: string }>(`/users/${id}/reset-mfa`, { method: 'POST' }),
+  revokeUserSessions: (id: number) =>
+    request<{ status: string; sessions_revoked: number }>(`/users/${id}/revoke-sessions`, { method: 'POST' }),
+  getAudit: (params?: { q?: string; action?: string; limit?: number; offset?: number }) => {
+    const query = new URLSearchParams();
+    for (const [k, v] of Object.entries(params ?? {})) {
+      if (v !== undefined && v !== '') query.set(k, String(v));
+    }
+    return request<AuditEntry[]>(`/system/audit?${query.toString()}`);
+  },
+  verifyAudit: () => request<{ valid: boolean; checked: number; first_bad_id: number | null }>('/system/audit/verify'),
   testDispatchAlert: (payload: { title: string; summary: string; severity: string; target_employee_email?: string }) =>
     request<{ status: string; deliveries_count: number; deliveries: NotificationDelivery[] }>('/alerts/test-dispatch', {
       method: 'POST',
@@ -207,6 +263,7 @@ export const api = {
   getDashboardMetrics: () => request<DashboardMetrics>('/dashboard/metrics'),
   getSeverityDistribution: () => request<ThreatSeverityDistribution>('/dashboard/severity-distribution'),
   getActivityTimeline: () => request<ActivityDataPoint[]>('/dashboard/activity-timeline'),
+  getCategoryDistribution: () => request<CategoryCount[]>('/dashboard/category-distribution'),
   getRecentEvents: (params?: { severity?: string; search?: string; limit?: number }) => {
     const query = new URLSearchParams();
     if (params?.severity && params.severity !== 'All') query.set('severity', params.severity);
@@ -261,7 +318,7 @@ export const api = {
   },
   getIncidentDetail: (id: string) => request<IncidentDetail>(`/incidents/${id}`),
   updateIncidentStatus: (id: string, payload: { status: string; analyst_name?: string; comment?: string }) =>
-    request<{ status: string; new_status: string }>(`/incidents/${id}/status`, {
+    request<{ status: string; new_status?: string; decision_id?: number; message?: string }>(`/incidents/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),

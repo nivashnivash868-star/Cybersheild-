@@ -110,6 +110,7 @@ def simulate_telemetry_pulse(
     })
 
     sec_event = SecurityEvent(
+        is_simulated=True,
         event_id=event_id,
         timestamp=now,
         event_source=f"{src.name} (Simulated Ingress)",

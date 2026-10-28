@@ -86,6 +86,11 @@ export interface SecurityEvent {
   analysis_status: string;
   recommended_action: string;
   incident_id?: string | null;
+  is_simulated?: boolean;
+  is_acknowledged?: boolean;
+  triage_status?: string | null;
+  triage_reason?: string | null;
+  triage_confidence?: number | null;
 }
 
 export interface IncidentEvidenceItem {
@@ -128,6 +133,14 @@ export interface IncidentDetail {
   correlation_reason?: string | null;
   correlation_confidence?: string | null;
   forensic_summary?: string | null;
+  l2_status?: string | null;
+  l2_verdict?: 'TRUE_POSITIVE' | 'FALSE_POSITIVE' | 'NEEDS_HUMAN' | null;
+  l2_confidence?: number | null;
+  l2_summary?: string | null;
+  l2_analysis?: string | null;
+  needs_human?: boolean;
+  l3_status?: string | null;
+  disposition?: string | null;
   evidence_items: IncidentEvidenceItem[];
   notes: InvestigationNoteItem[];
   actions: ResponseActionItem[];
@@ -146,6 +159,19 @@ export interface DashboardMetrics {
   db_mode: string;
   reputation_service_status: string;
   ml_models_active: boolean;
+  secret_leaks_total: number;
+  active_employees_monitored: number;
+  events_last_24h: number;
+  events_prev_24h: number;
+  critical_events_last_24h: number;
+  suspicious_urls_total: number;
+  zetaris_connected_sources: number;
+  simulated_events_total?: number;
+}
+
+export interface CategoryCount {
+  category: string;
+  count: number;
 }
 
 export interface ThreatSeverityDistribution {
@@ -157,6 +183,7 @@ export interface ThreatSeverityDistribution {
 
 export interface ActivityDataPoint {
   time_label: string;
+  bucket_end?: string;
   total_events: number;
   threats: number;
   phishing: number;
@@ -253,6 +280,147 @@ export interface BlocklistEntry {
   expires_at: string | null;
 }
 
+export interface ZetarisSourceState {
+  source: string;
+  table: string | null;
+  watermark: string;
+  last_run_at: string | null;
+  last_status: 'OK' | 'ERROR' | null;
+  last_error: string | null;
+  rows_seen: number;
+  events_created: number;
+}
+
+export interface ZetarisStatus {
+  configured: boolean;
+  connected: boolean;
+  error: string | null;
+  base_url: string;
+  latency_ms?: number;
+  databases?: string[];
+  tables: Record<string, string | null>;
+  sources: ZetarisSourceState[];
+}
+
+export interface ZetarisIngestReport {
+  status: string;
+  events_created: number;
+  correlated_incidents: number;
+  sources: Record<string, { status: string; rows?: number; events?: number; error?: string }>;
+}
+
+export interface Investigation {
+  indicator: string;
+  type: 'ip' | 'user';
+  sources_queried: string[];
+  stats: Record<string, number>;
+  timeline: { time: string; source: string; ip: string | null; summary: string }[];
+  suggested_blocks: { indicator: string; reason: string }[];
+}
+
+export interface SocOverview {
+  l1: { events_total: number; triaged: number; waiting: number; auto_closed: number; duplicates: number; escalated: number };
+  l2: { incidents_investigated: number; waiting: number; true_positive: number; needs_human: number; false_positive: number; auto_closed_incidents: number };
+  l3: { pending: number; approved: number; rejected: number; pending_by_kind: Record<string, number>; active_rules: number };
+  automation_rate: number | null;
+}
+
+export interface AgentRun {
+  id: number;
+  tier: 'L1' | 'L2';
+  agent: string;
+  subject_type: string;
+  subject_id: string;
+  decision: string;
+  reason: string;
+  confidence: number | null;
+  duration_ms: number;
+  created_at: string;
+}
+
+export interface DecisionRequest {
+  id: number;
+  kind: 'CONTAINMENT' | 'INCIDENT_DISPOSITION' | 'DETECTION_RULE' | 'DISABLE_ACCOUNT' | 'HOST_ISOLATION' | 'INCIDENT_CLOSURE';
+  requires_admin?: boolean;
+  incident_id: string | null;
+  title: string;
+  rationale: string;
+  evidence: string[];
+  proposal: Record<string, any>;
+  priority: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  created_by: string;
+  created_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  outcome: string | null;
+}
+
+export interface DetectionRule {
+  id: number;
+  name: string;
+  description: string | null;
+  kind: 'SUPPRESS' | 'ESCALATE';
+  match: Record<string, string | number>;
+  enabled: boolean;
+  created_by: string;
+  created_at: string;
+  hit_count: number;
+  last_hit_at: string | null;
+}
+
+export interface AdminOverview {
+  alerts: { total: number; last_24h: number; critical_open: number; unacknowledged_high: number };
+  incidents: { critical: number; unresolved: number; awaiting_approval: number; awaiting_admin: number };
+  analysts: { total: number; active: number; online_now: number; never_signed_in: number; without_mfa: number };
+  health: { name: string; status: 'ok' | 'warn' | 'down'; detail: string }[];
+  data: { simulated_events: number; total_events: number; all_simulated: boolean; any_simulated: boolean };
+  audit_entries: number;
+}
+
+export interface SettingDef {
+  key: string;
+  type: 'int' | 'choice';
+  group: string;
+  label: string;
+  help: string;
+  value: number | string;
+  default: number | string;
+  min?: number;
+  max?: number;
+  choices?: string[];
+  updated_by: string | null;
+  updated_at: string | null;
+}
+
+export interface PermissionRow {
+  capability: string;
+  [role: string]: boolean | string;
+}
+
+export interface IntegrationRow {
+  name: string;
+  configured: boolean;
+  detail: string;
+  recipients?: string[];
+  synthetic?: boolean;
+}
+
+export interface Assignable {
+  id: number;
+  full_name: string;
+  email: string;
+  role: UserRole;
+}
+
+export interface EventDetail {
+  event: SecurityEvent;
+  related_events: SecurityEvent[];
+  timeline: { time: string; event_id: string; category: string; severity: Severity; source: string; this: boolean }[];
+  automation: { tier: string; decision: string; reason: string; confidence: number | null; at: string }[];
+}
+
 export interface FeedTokenInfo {
   id: number;
   name: string;
@@ -323,11 +491,38 @@ export interface NotificationDelivery {
   severity: Severity;
   title: string;
   body_preview: string;
-  delivery_status: 'DELIVERED' | 'SUPPRESSED_DUPLICATE' | 'FAILED' | 'PENDING';
+  delivery_status: 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' | 'NOT_CONFIGURED' | 'SUPPRESSED_DUPLICATE';
   retry_count: number;
   incident_id?: string | null;
   event_id?: string | null;
   sent_at: string;
+  dispatched_at?: string | null;
+  last_error?: string | null;
+}
+
+export interface AdminUser {
+  id: number;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  is_active: boolean;
+  employee_id: string | null;
+  department: string | null;
+  created_at: string;
+  last_login: string | null;
+  mfa_enabled: boolean;
+}
+
+export interface AuditEntry {
+  id: number;
+  timestamp: string;
+  action: string;
+  actor: string;
+  resource_type: string;
+  resource_id: string;
+  details: string | null;
+  request_id: string | null;
+  ip_address: string | null;
 }
 
 // URL Interstitial Inspection Types

@@ -5,17 +5,50 @@ API and start `python -m app.worker` as its own service.
 """
 import asyncio
 import logging
+import time
+from app.config import settings
 from app.database import SessionLocal
+from app.models import naive_utc_now
 from app.services.blocklist import expire_due
 from app.services.outbox import process_outbox
 
 logger = logging.getLogger("cybershield.worker")
 
 
+_last_ingest = 0.0
+
+
+def _maybe_ingest(db) -> int:
+    """Pull new events from Zetaris on its own interval, when it is configured."""
+    global _last_ingest
+    if not (settings.ZETARIS_INGEST_ENABLED and settings.zetaris_configured):
+        return 0
+    if time.monotonic() - _last_ingest < settings.ZETARIS_INGEST_INTERVAL_SECONDS:
+        return 0
+    _last_ingest = time.monotonic()
+    from app.services import zetaris_ingest
+    from app.services.zetaris import ZetarisClient, ZetarisError
+    if not zetaris_ingest.configured_sources():
+        return 0
+    try:
+        with ZetarisClient() as client:
+            return zetaris_ingest.run_ingest(db, client).get("events_created", 0)
+    except ZetarisError as exc:
+        logger.warning("Zetaris ingest skipped: %s", exc)
+        return 0
+
+
 def run_once() -> dict:
     with SessionLocal() as db:
         stats = process_outbox(db)
         stats["expired_blocks"] = expire_due(db)
+        stats["zetaris_events"] = _maybe_ingest(db)
+    with SessionLocal() as db:
+        from app.services import soc_automation
+        stats["soc"] = soc_automation.run_cycle(db)  # L1 triage, then L2 investigation; L3 stays with people
+        from app.services import settings_store
+        settings_store.put_fact(db, "worker_heartbeat", naive_utc_now().isoformat())
+        db.commit()
     return stats
 
 

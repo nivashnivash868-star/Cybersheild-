@@ -183,6 +183,17 @@ class SecurityEvent(Base):
     acknowledged_by = Column(String(128), nullable=True)
     acknowledged_at = Column(DateTime, nullable=True)
 
+    # True for fabricated telemetry (demo seed, simulate-pulse, synthetic test data). Surfaced in the UI as "SIMULATED".
+    is_simulated = Column(Boolean, default=False, index=True, nullable=False)
+
+    # SOC Level 1 (automated triage). NEW -> DUPLICATE | AUTO_CLOSED | ESCALATED
+    triage_status = Column(String(16), default="NEW", index=True, nullable=False)
+    triage_rule = Column(String(48), nullable=True)
+    triage_reason = Column(String(500), nullable=True)
+    triage_confidence = Column(Float, nullable=True)
+    triaged_at = Column(DateTime, nullable=True)
+    duplicate_of = Column(String(64), nullable=True)
+
     incident_id = Column(String(64), ForeignKey("incidents.incident_id"), nullable=True, index=True)
     incident = relationship("Incident", back_populates="events")
 
@@ -231,6 +242,18 @@ class Incident(Base):
     correlation_reason = Column(Text, nullable=True)
     correlation_confidence = Column(String(64), default="High (Deterministic Match)", nullable=True)
     forensic_summary = Column(Text, nullable=True)
+
+    # SOC Level 2 (automated investigation). l2_status: PENDING -> DONE
+    l2_status = Column(String(16), default="PENDING", index=True, nullable=False)
+    l2_verdict = Column(String(24), nullable=True)  # TRUE_POSITIVE | FALSE_POSITIVE | NEEDS_HUMAN
+    l2_confidence = Column(Float, nullable=True)
+    l2_summary = Column(Text, nullable=True)
+    l2_analysis = Column(Text, nullable=True)  # JSON: steps, kill chain, entities, recommendations
+    l2_completed_at = Column(DateTime, nullable=True)
+    # SOC Level 3 (human decision). l3_status: NONE | AWAITING_DECISION | DECIDED
+    needs_human = Column(Boolean, default=False, index=True, nullable=False)
+    l3_status = Column(String(24), default="NONE", index=True, nullable=False)
+    disposition = Column(String(32), nullable=True)  # CONFIRMED_TRUE_POSITIVE | FALSE_POSITIVE
 
     events = relationship("SecurityEvent", back_populates="incident")
     evidence_items = relationship("IncidentEvidence", back_populates="incident", cascade="all, delete-orphan")
@@ -317,6 +340,84 @@ class BlocklistEntry(Base):
     decision_note = Column(String(500), nullable=True)
     activated_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True, index=True)
+
+
+class AgentRun(Base):
+    """Every decision the automated SOC tiers make, so humans can audit, trust and reverse them."""
+    __tablename__ = "agent_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tier = Column(String(4), index=True, nullable=False)  # L1 | L2
+    agent = Column(String(32), nullable=False)
+    subject_type = Column(String(16), nullable=False)  # event | incident
+    subject_id = Column(String(64), index=True, nullable=False)
+    decision = Column(String(32), index=True, nullable=False)
+    reason = Column(Text, nullable=False)
+    confidence = Column(Float, nullable=True)
+    duration_ms = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=naive_utc_now, index=True, nullable=False)
+
+
+class DecisionRequest(Base):
+    """Something the automated tiers will not do on their own: a human (SOC Level 3) must decide."""
+    __tablename__ = "decision_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(24), index=True, nullable=False)  # CONTAINMENT | INCIDENT_DISPOSITION | DETECTION_RULE
+    incident_id = Column(String(64), nullable=True, index=True)
+    title = Column(String(255), nullable=False)
+    rationale = Column(Text, nullable=False)
+    evidence = Column(Text, nullable=True)  # JSON list of supporting facts
+    proposal = Column(Text, nullable=False)  # JSON: what will happen on approval
+    priority = Column(String(16), default="Medium", index=True, nullable=False)
+    status = Column(String(12), default="PENDING", index=True, nullable=False)  # PENDING | APPROVED | REJECTED
+    created_by = Column(String(32), nullable=False)
+    created_at = Column(DateTime, default=naive_utc_now, index=True, nullable=False)
+    decided_by = Column(String(128), nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+    decision_note = Column(String(500), nullable=True)
+    outcome = Column(String(255), nullable=True)
+
+
+class DetectionRule(Base):
+    """Detection engineering: rules L1 applies. Created by humans, or proposed by L2 and approved by a human."""
+    __tablename__ = "detection_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(128), nullable=False)
+    description = Column(String(500), nullable=True)
+    kind = Column(String(12), index=True, nullable=False)  # SUPPRESS | ESCALATE
+    match_json = Column(Text, nullable=False)
+    enabled = Column(Boolean, default=True, index=True, nullable=False)
+    created_by = Column(String(128), nullable=False)
+    created_at = Column(DateTime, default=naive_utc_now, nullable=False)
+    source_decision_id = Column(Integer, nullable=True)
+    hit_count = Column(Integer, default=0, nullable=False)
+    last_hit_at = Column(DateTime, nullable=True)
+
+
+class SecuritySetting(Base):
+    """Administrator-tunable security configuration and small operational facts (e.g. the worker heartbeat)."""
+    __tablename__ = "security_settings"
+
+    key = Column(String(64), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_by = Column(String(128), nullable=True)
+    updated_at = Column(DateTime, default=naive_utc_now, nullable=False)
+
+
+class IngestState(Base):
+    """Progress of one Zetaris ingestion source (auth / network / email)."""
+    __tablename__ = "ingest_state"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String(32), unique=True, index=True, nullable=False)
+    watermark = Column(DateTime, nullable=False)  # only rows newer than this are read next time
+    last_run_at = Column(DateTime, nullable=True)
+    last_status = Column(String(16), nullable=True)  # OK | ERROR
+    last_error = Column(String(500), nullable=True)
+    rows_seen = Column(Integer, default=0, nullable=False)
+    events_created = Column(Integer, default=0, nullable=False)
 
 
 class FeedToken(Base):

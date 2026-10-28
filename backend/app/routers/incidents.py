@@ -10,8 +10,9 @@ from app.schemas import (
     AddNoteRequest, ExecuteResponseActionRequest
 )
 from app.services import blocklist as blocklist_service
+from app.services import soc_automation
 from app.services.correlation_engine import correlation_engine
-from app.utils.auth import ADMIN_ROLES, require_authenticated_user
+from app.utils.auth import ADMIN_ROLES, STAFF_ROLES, require_authenticated_user
 
 router = APIRouter(prefix="/incidents", tags=["Threat Prevention & Incident Response"])
 
@@ -58,6 +59,13 @@ def update_incident_status(incident_id: str, payload: IncidentStatusUpdateReques
     if not incident:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found.")
 
+    # Final closure of a Critical incident is not an analyst's decision alone: it becomes a request for an administrator.
+    if payload.status in ("Resolved", "False Positive") and incident.severity == "Critical" and user.role not in ADMIN_ROLES:
+        req = soc_automation.request_closure(db, incident, user, payload.status, payload.comment)
+        db.commit()
+        return {"status": "approval_requested", "incident_id": incident_id, "decision_id": req.id,
+                "message": "Closing a Critical incident needs a Security Administrator's approval. The request has been sent."}
+
     old_status = incident.status
     incident.status = payload.status
     incident.updated_at = datetime.now(timezone.utc)
@@ -90,8 +98,13 @@ def assign_incident_analyst(incident_id: str, payload: IncidentAssignRequest, db
     if not incident:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found.")
 
+    assignee = db.query(User).filter(User.is_active.is_(True), User.role.in_(STAFF_ROLES),
+                                     (User.full_name == payload.assigned_analyst) | (User.email == payload.assigned_analyst.lower())).first()
+    if assignee is None:
+        raise HTTPException(status_code=422, detail="Cases can only be assigned to an active analyst or administrator.")
     old_analyst = incident.assigned_analyst
-    incident.assigned_analyst = payload.assigned_analyst
+    incident.assigned_analyst = assignee.full_name
+    payload.assigned_analyst = assignee.full_name
     if incident.status == "New":
         incident.status = "Investigating"
     incident.updated_at = datetime.now(timezone.utc)

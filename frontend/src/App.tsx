@@ -11,7 +11,6 @@ import { DLPPage } from './pages/DLPPage';
 import { URLWarningModal } from './pages/URLWarningModal';
 import { IncidentResponsePage } from './pages/IncidentResponsePage';
 import { EmployeeDashboardPage } from './pages/EmployeeDashboardPage';
-import { IncidentsListPage } from './pages/IncidentsListPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -19,9 +18,12 @@ import { ForensicsPage } from './pages/ForensicsPage';
 import { FileAnalysisPage } from './pages/FileAnalysisPage';
 import { NetworkAnomalyPage } from './pages/NetworkAnomalyPage';
 import { SystemStatusPage } from './pages/SystemStatusPage';
-import { ProfileSettingsModal } from './components/profile/ProfileSettingsModal';
 import { api, UNAUTHORIZED_EVENT } from './api/client';
 import { BlocklistPage } from './pages/BlocklistPage';
+import { ZetarisPage } from './pages/ZetarisPage';
+import { AdministrationPage } from './pages/AdministrationPage';
+import { SocOperationsPage } from './pages/SocOperationsPage';
+import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { DashboardMetrics, SessionState, UserSession } from './types';
 
 export function App() {
@@ -31,12 +33,12 @@ export function App() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   // A session that exists but still owes MFA or a password change; shown on the sign-in screen.
   const [pendingSession, setPendingSession] = useState<SessionState | null>(null);
 
-  const landingTab = (user: UserSession): NavTab => (user.role === 'Employee' ? 'employee_dashboard' : 'overview');
+  const landingTab = (user: UserSession): NavTab =>
+    user.role === 'Employee' ? 'employee_dashboard' : user.role === 'Super Admin' || user.role === 'Security Administrator' ? 'admin_overview' : 'overview';
 
   const applySession = (state: SessionState | null) => {
     if (state && state.mfa_state === 'ok' && !state.must_change_password) {
@@ -169,7 +171,7 @@ export function App() {
             onLogout={handleLogout}
             onToggleSidebar={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
             onSearch={handleGlobalSearch}
-            onOpenProfileSettings={() => setIsProfileModalOpen(true)}
+            onOpenProfileSettings={() => setCurrentTab('settings')}
           />
 
           {/* Active View Content (13 Mockup Screens) */}
@@ -211,10 +213,12 @@ export function App() {
             )}
 
             {/* Screen 8: SOC Analyst - Incident Detail */}
-            {(currentTab === 'soc_analyst' || currentTab === 'incident_detail') && (
+            {(currentTab === 'incidents' || currentTab === 'soc_analyst' || currentTab === 'incident_detail') && (
               <IncidentResponsePage
+                currentUser={currentUser}
                 selectedIncidentId={selectedIncidentId}
                 onNavigateToForensics={handleNavigateToForensics}
+                onNavigateToTab={setCurrentTab}
               />
             )}
 
@@ -226,18 +230,11 @@ export function App() {
               />
             )}
 
-            {/* Screen 10: Incidents List */}
-            {currentTab === 'incidents' && (
-              <IncidentsListPage
-                onSelectIncident={handleSelectIncidentFromStream}
-              />
-            )}
-
             {/* Screen 11: Reports & Analytics */}
             {currentTab === 'reports' && <ReportsPage />}
 
             {/* Screen 12: Notifications */}
-            {currentTab === 'notifications' && <NotificationsPage />}
+            {currentTab === 'notifications' && <NotificationsPage currentUser={currentUser} />}
 
             {/* Screen 13: Settings */}
             {currentTab === 'settings' && (
@@ -255,21 +252,20 @@ export function App() {
             {/* Blocklist: proposals, approvals and firewall feeds */}
             {currentTab === 'blocklist' && <BlocklistPage currentUser={currentUser} />}
 
+            {currentTab === 'admin_overview' && <AdminDashboardPage onNavigateToTab={setCurrentTab} />}
+
+            {currentTab === 'soc_ops' && <SocOperationsPage currentUser={currentUser} onSelectIncident={handleSelectIncidentFromStream} />}
+
+            {currentTab === 'administration' && <AdministrationPage currentUser={currentUser} />}
+
+            {currentTab === 'zetaris' && <ZetarisPage currentUser={currentUser} onNavigateToTab={setCurrentTab} />}
+
             {/* System Status Diagnostic Page */}
             {currentTab === 'system' && <SystemStatusPage />}
           </main>
         </div>
       </div>
 
-      {/* Global User Profile Settings Modal */}
-      {currentUser && (
-        <ProfileSettingsModal
-          isOpen={isProfileModalOpen}
-          onClose={() => setIsProfileModalOpen(false)}
-          currentUser={currentUser}
-          onUpdateUser={setCurrentUser}
-        />
-      )}
     </div>
   );
 }

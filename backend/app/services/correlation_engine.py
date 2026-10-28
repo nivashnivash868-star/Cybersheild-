@@ -1,7 +1,7 @@
 import uuid
 import collections
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 from app.models import SecurityEvent, Incident, IncidentEvidence, AuditLog, utc_now
 
@@ -11,11 +11,10 @@ class IncidentCorrelationEngine:
     into unified suspected Incident entities with explainable evidence chains and uncertainty flags.
     """
 
-    def run_correlation(self, db: Session) -> List[Dict[str, Any]]:
-        # Fetch unassigned or recently analyzed security events
-        events: List[SecurityEvent] = db.query(SecurityEvent).filter(
-            SecurityEvent.incident_id.is_(None)
-        ).all()
+    def run_correlation(self, db: Session, events: Optional[List[SecurityEvent]] = None) -> List[Dict[str, Any]]:
+        # Default: every event not yet in an incident. The automated pipeline passes only the events L1 escalated.
+        if events is None:
+            events = db.query(SecurityEvent).filter(SecurityEvent.incident_id.is_(None)).all()
 
         if not events:
             return []

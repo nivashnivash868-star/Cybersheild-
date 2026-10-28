@@ -60,7 +60,8 @@ class UserCreateRequest(BaseModel):
     role: str
     department: Optional[str] = Field(None, max_length=128)
     employee_id: Optional[str] = Field(None, max_length=64)
-    temporary_password: str = Field(..., max_length=256)
+    temporary_password: Optional[str] = Field(None, max_length=256)
+    send_invite: Optional[bool] = Field(None, description="Email an activation link so the person chooses their own password. Default when no temporary password is given.")
 
 class UserAdminUpdateRequest(BaseModel):
     role: Optional[str] = None
@@ -289,6 +290,11 @@ class SecurityEventResponse(BaseModel):
     acknowledged_by: Optional[str] = None
     acknowledged_at: Optional[datetime] = None
     incident_id: Optional[str] = None
+    is_simulated: bool = False
+    triage_status: Optional[str] = None
+    triage_rule: Optional[str] = None
+    triage_reason: Optional[str] = None
+    triage_confidence: Optional[float] = None
 
 class AcknowledgeEventRequest(BaseModel):
     analyst_name: Optional[str] = None  # ignored: the actor is always the signed-in user
@@ -341,6 +347,14 @@ class IncidentDetailResponse(BaseModel):
     correlation_reason: Optional[str] = None
     correlation_confidence: Optional[str] = None
     forensic_summary: Optional[str] = None
+    l2_status: Optional[str] = None
+    l2_verdict: Optional[str] = None
+    l2_confidence: Optional[float] = None
+    l2_summary: Optional[str] = None
+    l2_analysis: Optional[str] = None  # JSON string: steps, kill chain, recommendations
+    needs_human: bool = False
+    l3_status: Optional[str] = None
+    disposition: Optional[str] = None
     evidence_items: List[IncidentEvidenceItem] = []
     notes: List[InvestigationNoteItem] = []
     actions: List[ResponseActionItem] = []
@@ -402,6 +416,16 @@ class DashboardMetrics(BaseModel):
     db_mode: str
     reputation_service_status: str
     ml_models_active: bool
+    events_last_24h: int = 0
+    events_prev_24h: int = 0
+    critical_events_last_24h: int = 0
+    suspicious_urls_total: int = 0
+    zetaris_connected_sources: int = 0
+    simulated_events_total: int = 0
+
+class CategoryCount(BaseModel):
+    category: str
+    count: int
 
 class ThreatSeverityDistribution(BaseModel):
     critical: int
@@ -411,6 +435,7 @@ class ThreatSeverityDistribution(BaseModel):
 
 class ActivityDataPoint(BaseModel):
     time_label: str
+    bucket_end: Optional[str] = None  # ISO-8601 UTC ('...Z'); the client formats it in the viewer's time zone
     total_events: int
     threats: int
     phishing: int

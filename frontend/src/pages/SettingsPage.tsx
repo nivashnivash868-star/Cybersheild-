@@ -1,572 +1,171 @@
 import React, { useState } from 'react';
-import {
-  Settings, Shield, Bell, Network, Users, Check,
-  Sliders, Lock, Save, RefreshCw, KeyRound, Globe, User as UserIcon,
-  CheckCircle2, Smartphone, AlertTriangle
-} from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
+import { BadgeCheck, KeyRound, LogOut, ShieldCheck } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
+import { api, UNAUTHORIZED_EVENT } from '../api/client';
 import { UserSession } from '../types';
-import { api } from '../api/client';
 
-interface SettingsPageProps {
-  currentUser?: UserSession | null;
-  onUpdateUser?: (updated: UserSession) => void;
-  initialTab?: 'profile' | 'monitoring' | 'general' | 'notifications' | 'integrations' | 'users';
+interface Props {
+  currentUser: UserSession;
+  onUpdateUser: (user: UserSession) => void;
 }
 
-export const SettingsPage: React.FC<SettingsPageProps> = ({
-  currentUser,
-  onUpdateUser,
-  initialTab = 'profile',
-}) => {
-  const { theme } = useTheme();
-  const [activeTab, setActiveTab] = useState<'profile' | 'monitoring' | 'general' | 'notifications' | 'integrations' | 'users'>(initialTab);
-  const [savedMsg, setSavedMsg] = useState(false);
+const card = 'bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 space-y-3';
+const field = 'w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white';
+const label = 'block text-xs font-semibold text-slate-700 dark:text-slate-300';
+const primary = 'px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-semibold disabled:opacity-50';
 
-  // Profile form state
-  const [profName, setProfName] = useState(currentUser?.name || 'Chief Information Security Officer');
-  const [profDept, setProfDept] = useState(currentUser?.department || 'Executive Security Office');
-  const [profPhone, setProfPhone] = useState('+1 (555) 942-8321');
-  const [profTimezone, setProfTimezone] = useState('Asia/Kolkata (UTC+05:30)');
-  const [profSaving, setProfSaving] = useState(false);
-  const [profSuccess, setProfSuccess] = useState<string | null>(null);
+const Message: React.FC<{ kind: 'ok' | 'error'; children: React.ReactNode }> = ({ kind, children }) => (
+  <p role={kind === 'error' ? 'alert' : 'status'} className={`text-xs ${kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{children}</p>
+);
 
-  // Password state in profile tab
-  const [curPassword, setCurPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [pwMsg, setPwMsg] = useState<string | null>(null);
+/** Account settings: only things that really persist. System configuration lives under Administration. */
+export const SettingsPage: React.FC<Props> = ({ currentUser, onUpdateUser }) => {
+  const privileged = currentUser.role !== 'Employee';
 
-  // Toggle settings matching Screen 13
-  const [toggles, setToggles] = useState({
-    monitorWebActivity: true,
-    scanEmailPhishing: true,
-    detectSensitiveData: true,
-    monitorFileUploads: true,
-    enableRealTimeAlerts: true,
-  });
+  // profile
+  const [name, setName] = useState(currentUser.name);
+  const [department, setDepartment] = useState(currentUser.department === 'Security Operations' ? '' : currentUser.department);
+  const [phone, setPhone] = useState('');
+  const [profileMsg, setProfileMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
-  const handleToggle = (key: keyof typeof toggles) => {
-    setToggles((prev) => ({ ...prev, [key]: !prev[key] }));
+  // password
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [pwMsg, setPwMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  // two-step verification
+  const [enrol, setEnrol] = useState<{ secret: string; otpauth_uri: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [offPassword, setOffPassword] = useState('');
+  const [mfaMsg, setMfaMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [showOff, setShowOff] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const run = async (fn: () => Promise<void>, onError: (m: string) => void) => {
+    setBusy(true);
+    try { await fn(); } catch (e: any) { onError(e.message || 'Something went wrong.'); } finally { setBusy(false); }
   };
 
-  const handleSave = () => {
-    setSavedMsg(true);
-    setTimeout(() => setSavedMsg(false), 2000);
-  };
-
-  const handleSaveProfile = async (e: React.FormEvent) => {
+  const saveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    setProfSaving(true);
-    setProfSuccess(null);
-    try {
-      const updated = await api.updateProfile({
-        full_name: profName.trim(),
-        department: profDept.trim(),
-        phone_number: profPhone.trim(),
-      });
-      if (onUpdateUser) onUpdateUser(updated);
-      setProfSuccess('Profile settings successfully saved.');
-      setTimeout(() => setProfSuccess(null), 3000);
-    } catch (err: any) {
-      alert(`Error saving profile: ${err.message}`);
-    } finally {
-      setProfSaving(false);
-    }
+    void run(async () => {
+      const updated = await api.updateProfile({ full_name: name.trim() || undefined, department: department.trim() || undefined, phone_number: phone.trim() || undefined });
+      onUpdateUser({ ...currentUser, name: updated.name, department: updated.department });
+      setProfileMsg({ kind: 'ok', text: 'Profile saved.' });
+    }, (m) => setProfileMsg({ kind: 'error', text: m }));
   };
 
-  const handleChangePassword = async (e: React.FormEvent) => {
+  const changePassword = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!curPassword || !newPassword || newPassword.length < 12) {
-      alert('Enter your current password and a new one of at least 12 characters.');
-      return;
-    }
-    try {
-      const res = await api.changePassword({
-        current_password: curPassword,
-        new_password: newPassword,
-      });
-      setPwMsg(res.message);
-      setCurPassword('');
-      setNewPassword('');
-      setTimeout(() => setPwMsg(null), 3000);
-    } catch (err: any) {
-      alert(`Password error: ${err.message}`);
-    }
+    if (next !== confirm) return setPwMsg({ kind: 'error', text: 'The new passwords do not match.' });
+    void run(async () => {
+      const res = await api.changePassword({ current_password: current, new_password: next });
+      setCurrent(''); setNext(''); setConfirm('');
+      setPwMsg({ kind: 'ok', text: res.message });
+    }, (m) => setPwMsg({ kind: 'error', text: m }));
   };
+
+  const startMfa = () => void run(async () => { setMfaMsg(null); setEnrol(await api.mfaSetup()); }, (m) => setMfaMsg({ kind: 'error', text: m }));
+
+  const confirmMfa = (e: React.FormEvent) => {
+    e.preventDefault();
+    void run(async () => {
+      const state = await api.mfaEnable(code);
+      onUpdateUser(state.user);
+      setEnrol(null); setCode('');
+      setMfaMsg({ kind: 'ok', text: 'Two-step verification is on. Your other sessions were signed out.' });
+    }, (m) => setMfaMsg({ kind: 'error', text: m }));
+  };
+
+  const turnOffMfa = (e: React.FormEvent) => {
+    e.preventDefault();
+    void run(async () => {
+      await api.mfaDisable(offPassword, code);
+      onUpdateUser({ ...currentUser, mfa_enabled: false });
+      setShowOff(false); setOffPassword(''); setCode('');
+      setMfaMsg({ kind: 'ok', text: 'Two-step verification is off.' });
+    }, (m) => setMfaMsg({ kind: 'error', text: m }));
+  };
+
+  const signOutEverywhere = () => void run(async () => {
+    await api.logoutAll();
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }, (m) => setMfaMsg({ kind: 'error', text: m }));
 
   return (
-    <div className="space-y-6">
-      {/* Header matching Screen 13 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-            Security Settings
-          </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Configure telemetry sensors, automated detection policies, and governance
-          </p>
-        </div>
-
-        <button
-          onClick={handleSave}
-          className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-semibold shadow-xs transition self-start sm:self-auto"
-        >
-          <Save className="w-3.5 h-3.5" />
-          <span>{savedMsg ? 'Saved!' : 'Save Settings'}</span>
-        </button>
+    <div className="space-y-6 max-w-3xl">
+      <div className="pb-2 border-b border-slate-200 dark:border-slate-800">
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Account settings</h1>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+          {currentUser.email} · {currentUser.role}.{privileged && ' Alert thresholds, integrations and accounts are managed by administrators.'}
+        </p>
       </div>
 
-      {/* Tabs matching Screen 13 */}
-      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 text-xs font-semibold overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('profile')}
-          className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap flex items-center gap-1.5 ${
-            activeTab === 'profile'
-              ? 'bg-sky-600 text-white font-bold'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          <UserIcon className="w-3.5 h-3.5" />
-          <span>Profile Settings</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('general')}
-          className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap ${
-            activeTab === 'general'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          General
-        </button>
-        <button
-          onClick={() => setActiveTab('monitoring')}
-          className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap ${
-            activeTab === 'monitoring'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          Monitoring
-        </button>
-        <button
-          onClick={() => setActiveTab('notifications')}
-          className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap ${
-            activeTab === 'notifications'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          Notifications
-        </button>
-        <button
-          onClick={() => setActiveTab('integrations')}
-          className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap ${
-            activeTab === 'integrations'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          Integrations
-        </button>
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap ${
-            activeTab === 'users'
-              ? 'bg-sky-600 text-white'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          User Management
-        </button>
-      </div>
+      <form onSubmit={saveProfile} className={card}>
+        <h2 className="text-sm font-bold text-slate-900 dark:text-white">Profile</h2>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className={label}>Full name<input value={name} onChange={(e) => setName(e.target.value)} required className={field + ' mt-1'} /></label>
+          <label className={label}>Department<input value={department} onChange={(e) => setDepartment(e.target.value)} className={field + ' mt-1'} /></label>
+          <label className={label}>Mobile number for SMS alerts<input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+15551234567" className={field + ' mt-1 font-mono'} />
+            <span className="font-normal text-[11px] text-slate-500">International format. Leave empty to keep the current number.</span></label>
+        </div>
+        <div className="flex items-center gap-3"><button disabled={busy} className={primary}>Save profile</button>{profileMsg && <Message kind={profileMsg.kind}>{profileMsg.text}</Message>}</div>
+      </form>
 
-      {/* TAB 1: PROFILE SETTINGS */}
-      {activeTab === 'profile' && (
-        <div className="space-y-6">
-          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-6">
-            <div className="flex flex-col sm:flex-row items-center gap-4 pb-5 border-b border-slate-100 dark:border-slate-800">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white flex items-center justify-center text-xl font-bold shadow-md shadow-sky-600/20">
-                {(profName || 'Admin').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
-              </div>
-              <div className="text-center sm:text-left flex-1">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">{profName}</h3>
-                  <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 self-center sm:self-auto">
-                    {currentUser?.role || 'Super Admin'}
-                  </span>
-                </div>
-                <p className="text-slate-500 dark:text-slate-400 font-mono text-[11px] mt-0.5">
-                  {currentUser?.email || 'admin@cybershield.corp'}
-                </p>
-                <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1">
-                  Security Clearance: Tier-3 Unrestricted SOC Access
-                </p>
-              </div>
-            </div>
-
-            {profSuccess && (
-              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-lg flex items-center gap-2 text-xs">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>{profSuccess}</span>
-              </div>
+      <section className={card}>
+        <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Two-step verification</h2>
+        {currentUser.mfa_enabled ? (
+          <>
+            <p className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5"><BadgeCheck className="w-4 h-4" /> On. You enter a code from your authenticator app when you sign in.</p>
+            {!showOff ? (
+              <button onClick={() => { setShowOff(true); setMfaMsg(null); }} className="text-xs font-semibold text-red-600 dark:text-red-400 hover:underline">Turn off…</button>
+            ) : (
+              <form onSubmit={turnOffMfa} className="space-y-2">
+                <label className={label}>Your password<input type="password" required value={offPassword} onChange={(e) => setOffPassword(e.target.value)} className={field + ' mt-1'} autoComplete="current-password" /></label>
+                <label className={label}>Current 6-digit code<input inputMode="numeric" maxLength={6} required value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} className={field + ' mt-1 font-mono'} autoComplete="one-time-code" /></label>
+                <div className="flex gap-3"><button disabled={busy} className={primary}>Turn off</button><button type="button" onClick={() => setShowOff(false)} className="text-xs text-slate-500">Cancel</button></div>
+              </form>
             )}
-
-            <form onSubmit={handleSaveProfile} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                    Full Name
-                  </label>
-                  <input
-                    type="text"
-                    value={profName}
-                    onChange={(e) => setProfName(e.target.value)}
-                    required
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-sky-500 outline-none text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                    Corporate Email
-                  </label>
-                  <input
-                    type="email"
-                    value={currentUser?.email || 'admin@cybershield.corp'}
-                    disabled
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 font-mono text-xs cursor-not-allowed"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                    Department / Unit
-                  </label>
-                  <select
-                    value={profDept}
-                    onChange={(e) => setProfDept(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-sky-500 outline-none text-xs"
-                  >
-                    <option value="Executive Security Office">Executive Security Office</option>
-                    <option value="Security Operations Center (SOC)">Security Operations Center (SOC)</option>
-                    <option value="Cyber Threat Intelligence">Cyber Threat Intelligence</option>
-                    <option value="SecOps & Identity Management">SecOps & Identity Management</option>
-                    <option value="Incident Response Team">Incident Response Team</option>
-                    <option value="Engineering & Dev">Engineering & Dev</option>
-                    <option value="Finance & Procurement">Finance & Procurement</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                    Emergency Phone
-                  </label>
-                  <input
-                    type="tel"
-                    value={profPhone}
-                    onChange={(e) => setProfPhone(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-sky-500 outline-none text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                    Operating Timezone
-                  </label>
-                  <select
-                    value={profTimezone}
-                    onChange={(e) => setProfTimezone(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-sky-500 outline-none text-xs"
-                  >
-                    <option value="Asia/Kolkata (UTC+05:30)">Asia/Kolkata (UTC+05:30)</option>
-                    <option value="UTC (UTC+00:00)">UTC (UTC+00:00 - GMT)</option>
-                    <option value="America/New_York (UTC-05:00)">America/New_York (UTC-05:00 - EST)</option>
-                    <option value="America/Los_Angeles (UTC-08:00)">America/Los_Angeles (UTC-08:00 - PST)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                    Operator ID
-                  </label>
-                  <input
-                    type="text"
-                    value="EMP-0001 (Master Operator)"
-                    disabled
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 font-mono text-xs cursor-not-allowed"
-                  />
-                </div>
+            {privileged && <p className="text-[11px] text-slate-500">Administrators and analysts can't turn this off when the platform requires it.</p>}
+          </>
+        ) : !enrol ? (
+          <>
+            <p className="text-xs text-slate-600 dark:text-slate-400">Add a second step so a stolen password alone can't sign in as you.</p>
+            <button disabled={busy} onClick={startMfa} className={primary}>Set up two-step verification</button>
+          </>
+        ) : (
+          <form onSubmit={confirmMfa} className="space-y-3">
+            <div className="flex flex-col sm:flex-row items-center gap-4">
+              <div className="bg-white p-2 rounded"><QRCodeSVG value={enrol.otpauth_uri} size={140} /></div>
+              <div className="text-xs text-slate-600 dark:text-slate-400 space-y-2">
+                <p>Scan with an authenticator app, or enter this key manually:</p>
+                <code className="block font-mono break-all text-slate-900 dark:text-white select-all">{enrol.secret}</code>
               </div>
+            </div>
+            <label className={label}>6-digit code<input inputMode="numeric" maxLength={6} required autoFocus value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} className={field + ' mt-1 font-mono tracking-widest max-w-40'} autoComplete="one-time-code" /></label>
+            <div className="flex gap-3"><button disabled={busy} className={primary}>Turn on</button><button type="button" onClick={() => { setEnrol(null); setCode(''); }} className="text-xs text-slate-500">Cancel</button></div>
+          </form>
+        )}
+        {mfaMsg && <Message kind={mfaMsg.kind}>{mfaMsg.text}</Message>}
+      </section>
 
-              <div className="flex justify-end pt-2">
-                <button
-                  type="submit"
-                  disabled={profSaving}
-                  className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-semibold shadow-xs transition disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>{profSaving ? 'Saving Profile...' : 'Save Profile Changes'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Password update section */}
-          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-4">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
-              <Lock className="w-3.5 h-3.5 text-sky-600" />
-              <span>Password & Security Key</span>
-            </h4>
-            {pwMsg && (
-              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-lg text-xs">
-                {pwMsg}
-              </div>
-            )}
-            <form onSubmit={handleChangePassword} className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                    Current Password
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="Enter existing password"
-                    value={curPassword}
-                    onChange={(e) => setCurPassword(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                    New Password
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="At least 8 characters"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    required
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs"
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold"
-              >
-                Update Password
-              </button>
-            </form>
-          </div>
+      <form onSubmit={changePassword} className={card}>
+        <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2"><KeyRound className="w-4 h-4" /> Password</h2>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className={label}>Current<input type="password" required value={current} onChange={(e) => setCurrent(e.target.value)} className={field + ' mt-1'} autoComplete="current-password" /></label>
+          <label className={label}>New (12+ characters)<input type="password" required minLength={12} value={next} onChange={(e) => setNext(e.target.value)} className={field + ' mt-1'} autoComplete="new-password" /></label>
+          <label className={label}>Repeat new<input type="password" required minLength={12} value={confirm} onChange={(e) => setConfirm(e.target.value)} className={field + ' mt-1'} autoComplete="new-password" /></label>
         </div>
-      )}
+        <div className="flex items-center gap-3"><button disabled={busy} className={primary}>Change password</button>{pwMsg && <Message kind={pwMsg.kind}>{pwMsg.text}</Message>}</div>
+        <p className="text-[11px] text-slate-500">Changing it signs you out of every other device.</p>
+      </form>
 
-      {/* TAB 2: MONITORING CONTROLS */}
-      {activeTab === 'monitoring' && (
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-6">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-1">
-              Core Monitoring Controls
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-              Enable or tune live sensor telemetry pipelines across company endpoints and gateways.
-            </p>
-
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {/* Toggle 1: Monitor web activity */}
-              <div className="py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                    Monitor web activity
-                  </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Inspect outbound URLs and enforce web gateway warning interstitials.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleToggle('monitorWebActivity')}
-                  className={`w-11 h-6 flex items-center rounded-full p-1 transition duration-200 ${
-                    toggles.monitorWebActivity ? 'bg-sky-600 justify-end' : 'bg-slate-300 dark:bg-slate-700 justify-start'
-                  }`}
-                >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-md" />
-                </button>
-              </div>
-
-              {/* Toggle 2: Scan email for phishing */}
-              <div className="py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                    Scan email for phishing
-                  </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Execute TF-IDF NLP model on incoming email subjects and body text.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleToggle('scanEmailPhishing')}
-                  className={`w-11 h-6 flex items-center rounded-full p-1 transition duration-200 ${
-                    toggles.scanEmailPhishing ? 'bg-sky-600 justify-end' : 'bg-slate-300 dark:bg-slate-700 justify-start'
-                  }`}
-                >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-md" />
-                </button>
-              </div>
-
-              {/* Toggle 3: Detect sensitive data exposure */}
-              <div className="py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                    Detect sensitive data exposure (DLP)
-                  </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Scan repositories and communications for leaked AWS keys, tokens, and credentials with UI masking.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleToggle('detectSensitiveData')}
-                  className={`w-11 h-6 flex items-center rounded-full p-1 transition duration-200 ${
-                    toggles.detectSensitiveData ? 'bg-sky-600 justify-end' : 'bg-slate-300 dark:bg-slate-700 justify-start'
-                  }`}
-                >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-md" />
-                </button>
-              </div>
-
-              {/* Toggle 4: Monitor file uploads */}
-              <div className="py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                    Monitor file uploads
-                  </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Analyze byte Shannon entropy and Windows PE headers without execution.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleToggle('monitorFileUploads')}
-                  className={`w-11 h-6 flex items-center rounded-full p-1 transition duration-200 ${
-                    toggles.monitorFileUploads ? 'bg-sky-600 justify-end' : 'bg-slate-300 dark:bg-slate-700 justify-start'
-                  }`}
-                >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-md" />
-                </button>
-              </div>
-
-              {/* Toggle 5: Enable real-time alerts */}
-              <div className="py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                    Enable real-time alerts
-                  </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Dispatch email and optional SMS warnings for Critical and High severity incidents with deduplication.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleToggle('enableRealTimeAlerts')}
-                  className={`w-11 h-6 flex items-center rounded-full p-1 transition duration-200 ${
-                    toggles.enableRealTimeAlerts ? 'bg-sky-600 justify-end' : 'bg-slate-300 dark:bg-slate-700 justify-start'
-                  }`}
-                >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-md" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Monitoring Policies Section matching Screen 13 */}
-          <div className="pt-4 border-t border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                Monitoring Policies
-              </h4>
-              <button
-                onClick={() => alert('Editing Policy rules...')}
-                className="px-3 py-1 text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded"
-              >
-                Edit Policy
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-              <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-                <span className="font-semibold text-slate-900 dark:text-white block">Standard Policy</span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">General workforce email & web gateway inspection.</p>
-              </div>
-              <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-                <span className="font-semibold text-slate-900 dark:text-white block">Strict (Executive & Finance)</span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Enhanced DLP, SMS alerts, and zero-trust verification.</p>
-              </div>
-              <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-                <span className="font-semibold text-slate-900 dark:text-white block">DevOps & Cloud Admin</span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Git commit scanning and cloud audit log correlation.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* OTHER TABS (GENERAL, NOTIFICATIONS, INTEGRATIONS, USERS) */}
-      {activeTab === 'general' && (
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 text-xs space-y-4">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-white">General Security Governance</h3>
-          <p className="text-slate-500">Configure organization name, session inactivity timeouts, and SOC retention rules.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-            <div>
-              <label className="block font-medium mb-1 text-slate-600 dark:text-slate-400">Organization Name</label>
-              <input type="text" defaultValue="CYBERSHIELD AI Enterprise Global" className="w-full px-3 py-2 border rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800" />
-            </div>
-            <div>
-              <label className="block font-medium mb-1 text-slate-600 dark:text-slate-400">Session Inactivity Lock</label>
-              <select className="w-full px-3 py-2 border rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-                <option>15 Minutes</option>
-                <option>30 Minutes</option>
-                <option>1 Hour</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'notifications' && (
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 text-xs space-y-4">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-white">Notification Endpoints</h3>
-          <p className="text-slate-500">Manage Twilio SMS, AWS SES Email, and webhook gateways.</p>
-          <div className="p-3 border rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 text-emerald-800 dark:text-emerald-300">
-            Corporate Email Delivery: Verified (Exchange & Postfix Gateways Active)
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'integrations' && (
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 text-xs space-y-4">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-white">Connected SIEM & Threat Intel</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3 border rounded-lg bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 flex justify-between items-center">
-              <span>Splunk / Elastic Connector</span>
-              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">CONNECTED</span>
-            </div>
-            <div className="p-3 border rounded-lg bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 flex justify-between items-center">
-              <span>VirusTotal & AbuseIPDB Threat Feeds</span>
-              <span className="text-[10px] bg-sky-100 text-sky-800 font-bold px-2 py-0.5 rounded">ACTIVE</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'users' && (
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 text-xs space-y-4">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-white">Role-Based Access Control (RBAC) Matrix</h3>
-          <p className="text-slate-500">4 Enforced Tiers: Super Admin, Security Administrator, SOC Analyst, Employee.</p>
-        </div>
-      )}
+      <section className={card}>
+        <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2"><LogOut className="w-4 h-4" /> Sessions</h2>
+        <p className="text-xs text-slate-600 dark:text-slate-400">Sign out of this device and every other one you're signed in on.</p>
+        <button disabled={busy} onClick={signOutEverywhere} className="px-3.5 py-2 bg-slate-800 dark:bg-slate-700 text-white rounded-lg text-xs font-semibold disabled:opacity-50">Sign out everywhere</button>
+      </section>
     </div>
   );
 };

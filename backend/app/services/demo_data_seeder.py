@@ -695,6 +695,8 @@ def seed_demo_soc_data(db: Session, force_reset: bool = False):
         )
     ]
     db.add_all(audit_entries)
+    db.flush()
+    db.query(SecurityEvent).update({SecurityEvent.is_simulated: True})   # everything seeded is fabricated
     db.commit()
 
     return {"status": "success", "message": "Enterprise cybersecurity dataset successfully populated."}
