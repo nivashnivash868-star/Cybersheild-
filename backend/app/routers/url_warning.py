@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import SecurityEvent, AuditLog, ThreatAnalysis
+from app.models import SecurityEvent, AuditLog, ThreatAnalysis, User
+from app.utils.auth import require_authenticated_user
 from app.schemas import URLWarningInspectRequest, URLWarningInspectResponse, URLOverrideLogRequest
 from app.services.phishing_engine import phishing_detector
 from app.services.alert_engine import alert_engine
@@ -27,13 +29,13 @@ def inspect_url_for_warning(payload: URLWarningInspectRequest, db: Session = Dep
     # If dangerous, log SecurityEvent in SOC stream
     if is_dangerous:
         sec_event = SecurityEvent(
-            event_id=f"SEC-URL-WARN-{int(now.timestamp()) % 100000}",
+            event_id=f"SEC-URL-WARN-{uuid.uuid4().hex[:12].upper()}",
             timestamp=now,
             event_source="Browser Web Gateway Sensor",
             threat_category=f"Suspicious URL Access Attempt ({analysis.risk_category})",
             risk_score=analysis.risk_score,
             severity=analysis.risk_category,
-            source_ip="10.0.12.84",
+            source_ip=None,
             dest_ip=None,
             domain=domain,
             file_hash=None,
@@ -80,22 +82,23 @@ def inspect_url_for_warning(payload: URLWarningInspectRequest, db: Session = Dep
     )
 
 @router.post("/override")
-def record_employee_override(payload: URLOverrideLogRequest, db: Session = Depends(get_db)):
+def record_employee_override(payload: URLOverrideLogRequest, db: Session = Depends(get_db),
+                             user: User = Depends(require_authenticated_user)):
     """Logs when an employee overrides a warning banner and proceeds at their own risk."""
     now = datetime.now(timezone.utc)
     
     audit = AuditLog(
         action="URL_WARNING_OVERRIDE",
-        actor=payload.employee_email,
+        actor=user.email,
         resource_type="URL",
         resource_id=payload.url[:128],
-        details=f"Employee {payload.employee_email} bypassed warning for {payload.url}. Justification: {payload.override_reason}"
+        details=f"Employee {user.email} bypassed warning for {payload.url}. Justification: {payload.override_reason}"
     )
     db.add(audit)
 
     # Create escalated SOC event
     sec_event = SecurityEvent(
-        event_id=f"SEC-OVERRIDE-{int(now.timestamp()) % 100000}",
+        event_id=f"SEC-OVERRIDE-{uuid.uuid4().hex[:12].upper()}",
         timestamp=now,
         event_source="Browser Web Gateway (User Override)",
         threat_category="Policy Override / Risky Site Visit",
@@ -105,7 +108,7 @@ def record_employee_override(payload: URLOverrideLogRequest, db: Session = Depen
         dest_ip=None,
         domain=payload.url[:64],
         file_hash=None,
-        user_account=payload.employee_email,
+        user_account=user.email,
         employee_id=None,
         evidence=f"User bypassed warning banner with justification: '{payload.override_reason}'. Destination: {payload.url}",
         analysis_status="Analyzed",

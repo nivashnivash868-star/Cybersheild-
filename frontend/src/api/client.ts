@@ -2,131 +2,122 @@ import {
   DashboardMetrics, ThreatSeverityDistribution, ActivityDataPoint,
   SecurityEvent, PhishingAnalysisResult, FileAnalysisResult,
   NetworkAnalysisBatchResult, IncidentDetail, ForensicInvestigation,
-  SystemStatusData, UserSession, DemoAccount, Employee, MonitoringSource,
+  SystemStatusData, UserSession, SessionState, BlocklistEntry, FeedTokenInfo, Employee, MonitoringSource,
   SecretFinding, NotificationDelivery, URLInspectionResult
 } from '../types';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api/v1';
 
-let authToken: string | null = localStorage.getItem('cybershield_token');
+/** Fired when a request that needed a session gets 401, so the app can return to the sign-in screen. */
+export const UNAUTHORIZED_EVENT = 'cybershield:unauthorized';
 
-export const setAuthToken = (token: string | null) => {
-  authToken = token;
-  if (token) {
-    localStorage.setItem('cybershield_token', token);
-  } else {
-    localStorage.removeItem('cybershield_token');
+const CSRF_COOKIE = 'cs_csrf';
+
+function readCookie(name: string): string {
+  const match = document.cookie.split('; ').find((c) => c.startsWith(`${name}=`));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : '';
+}
+
+/** The session itself is an HttpOnly cookie the page can't read; only this CSRF token is exposed to scripts. */
+function csrfHeaders(method: string): Record<string, string> {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) return {};
+  const token = readCookie(CSRF_COOKIE);
+  return token ? { 'X-CSRF-Token': token } : {};
+}
+
+async function throwForResponse(res: Response, endpoint: string): Promise<never> {
+  const errorText = await res.text();
+  let errorMsg = `API Error ${res.status}: ${res.statusText}`;
+  try {
+    const parsed = JSON.parse(errorText);
+    if (typeof parsed.detail === 'string') errorMsg = parsed.detail;
+    else if (Array.isArray(parsed.detail)) errorMsg = parsed.detail.map((d: any) => d.msg).join('; ');
+  } catch {
+    if (errorText) errorMsg = errorText;
   }
-};
-
-export const getAuthToken = () => authToken;
+  const isAuthProbe = endpoint === '/auth/me' || endpoint === '/auth/login';
+  if (res.status === 401 && !isAuthProbe) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  throw new Error(errorMsg);
+}
 
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  const method = options?.method ?? 'GET';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...csrfHeaders(method),
     ...(options?.headers as Record<string, string>),
   };
 
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
-  }
-
-  const res = await fetch(`${BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    let errorMsg = `API Error ${res.status}: ${res.statusText}`;
-    try {
-      const parsed = JSON.parse(errorText);
-      if (parsed.detail) errorMsg = parsed.detail;
-    } catch {
-      if (errorText) errorMsg = errorText;
-    }
-    throw new Error(errorMsg);
-  }
-
+  const res = await fetch(`${BASE_URL}${endpoint}`, { ...options, headers, credentials: 'include' });
+  if (!res.ok) await throwForResponse(res, endpoint);
   return res.json() as Promise<T>;
 }
 
+async function requestText(endpoint: string): Promise<string> {
+  const res = await fetch(`${BASE_URL}${endpoint}`, { credentials: 'include' });
+  if (!res.ok) await throwForResponse(res, endpoint);
+  return res.text();
+}
+
+const toSession = (u: any): UserSession => ({
+  id: u.id,
+  email: u.email,
+  name: u.full_name || u.name,
+  role: u.role,
+  department: u.department || 'Security Operations',
+  is_active: u.is_active,
+  mfa_enabled: !!u.mfa_enabled,
+});
+
+const toState = (res: any): SessionState => ({
+  user: toSession(res.user),
+  mfa_state: res.mfa_state,
+  must_change_password: !!res.must_change_password,
+});
+
 export const api = {
   // Authentication & RBAC
-  login: async (credentials: { email: string; password: string }): Promise<UserSession> => {
-    const res = await request<any>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(credentials),
-    });
-    const user = res.user || res;
-    return {
-      id: user.id,
-      email: user.email,
-      name: user.full_name || user.name,
-      role: user.role,
-      department: user.department || 'Security Operations',
-      is_active: user.is_active,
-      access_token: res.access_token,
-    };
-  },
-  loginWithSSO: async (payload: { provider: 'google' | 'microsoft'; email: string; name?: string; role?: string }): Promise<UserSession> => {
-    const res = await request<any>('/auth/sso', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    const user = res.user || res;
-    return {
-      id: user.id,
-      email: user.email,
-      name: user.full_name || user.name,
-      role: user.role,
-      department: user.department || 'Corporate Workspace',
-      is_active: user.is_active,
-      access_token: res.access_token,
-    };
-  },
-  getMe: async (): Promise<UserSession> => {
-    const res = await request<any>('/auth/me');
-    return {
-      id: res.id,
-      email: res.email,
-      name: res.full_name || res.name,
-      role: res.role,
-      department: res.department || 'Security Operations',
-      is_active: res.is_active,
-      access_token: getAuthToken() || '',
-    };
-  },
-  updateProfile: async (payload: { full_name?: string; department?: string; phone_number?: string }): Promise<UserSession> => {
-    const res = await request<any>('/auth/profile', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
-    return {
-      id: res.id,
-      email: res.email,
-      name: res.full_name || res.name,
-      role: res.role,
-      department: res.department || 'Security Operations',
-      is_active: res.is_active,
-      access_token: getAuthToken() || '',
-    };
-  },
-  changePassword: (payload: { current_password?: string; new_password: string }) =>
+  login: async (credentials: { email: string; password: string }): Promise<SessionState> =>
+    toState(await request<any>('/auth/login', { method: 'POST', body: JSON.stringify(credentials) })),
+  getMe: async (): Promise<SessionState> => toState(await request<any>('/auth/me')),
+  mfaSetup: () => request<{ secret: string; otpauth_uri: string }>('/auth/mfa/setup', { method: 'POST' }),
+  mfaEnable: async (code: string): Promise<SessionState> =>
+    toState(await request<any>('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ code }) })),
+  mfaVerify: async (code: string): Promise<SessionState> =>
+    toState(await request<any>('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code }) })),
+  updateProfile: async (payload: { full_name?: string; department?: string; phone_number?: string }): Promise<UserSession> =>
+    toSession(await request<any>('/auth/profile', { method: 'PUT', body: JSON.stringify(payload) })),
+  changePassword: (payload: { current_password: string; new_password: string }) =>
     request<{ status: string; message: string }>('/auth/change-password', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  logout: () =>
-    request<{ status: string; message: string }>('/auth/logout', {
+  logout: () => request<{ status: string }>('/auth/logout', { method: 'POST' }),
+  forgotPassword: (email: string) =>
+    request<{ status: string; message: string }>('/auth/forgot-password', {
       method: 'POST',
+      body: JSON.stringify({ email }),
     }),
-  resetPassword: (payload: { email: string; new_password?: string }) =>
+  resetPassword: (payload: { token: string; new_password: string }) =>
     request<{ status: string; message: string }>('/auth/reset-password', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  getDemoAccounts: () => request<DemoAccount[]>('/auth/demo-accounts'),
+
+  // Blocklist (prevention)
+  getBlocklist: (status?: string) =>
+    request<BlocklistEntry[]>(`/blocklist${status && status !== 'All' ? `?status=${status}` : ''}`),
+  proposeBlock: (payload: { indicator: string; reason: string; ttl_hours?: number; incident_id?: string }) =>
+    request<BlocklistEntry>('/blocklist', { method: 'POST', body: JSON.stringify(payload) }),
+  decideBlock: (id: number, decision: 'approve' | 'reject' | 'revoke', note?: string) =>
+    request<BlocklistEntry>(`/blocklist/${id}/${decision}`, { method: 'POST', body: JSON.stringify({ note }) }),
+  getFeedTokens: () => request<FeedTokenInfo[]>('/blocklist/feeds'),
+  createFeedToken: (name: string) =>
+    request<{ id: number; name: string; token: string; urls: Record<string, string>; note: string }>(
+      '/blocklist/feeds',
+      { method: 'POST', body: JSON.stringify({ name }) }
+    ),
+  revokeFeedToken: (id: number) => request<{ status: string }>(`/blocklist/feeds/${id}`, { method: 'DELETE' }),
 
   // Employee Management
   getEmployees: (params?: { department?: string; policy?: string; search?: string }) => {
@@ -236,17 +227,13 @@ export const api = {
   analyzeFile: async (file: File): Promise<FileAnalysisResult> => {
     const formData = new FormData();
     formData.append('file', file);
-    const headers: Record<string, string> = {};
-    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
     const res = await fetch(`${BASE_URL}/files/analyze`, {
       method: 'POST',
-      headers,
+      headers: csrfHeaders('POST'),
+      credentials: 'include',
       body: formData,
     });
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(err || 'File analysis failed');
-    }
+    if (!res.ok) await throwForResponse(res, '/files/analyze');
     return res.json();
   },
   analyzeSampleFile: (sampleType: string) =>
@@ -283,13 +270,13 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ assigned_analyst }),
     }),
-  addIncidentNote: (id: string, payload: { analyst_name: string; note_text: string }) =>
+  addIncidentNote: (id: string, payload: { note_text: string }) =>
     request<{ status: string; note_id: number }>(`/incidents/${id}/notes`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  executeResponseAction: (id: string, payload: { action_type: string; target: string; details?: string }) =>
-    request<{ status: string; is_simulated: boolean; message: string }>(`/incidents/${id}/actions`, {
+  executeResponseAction: (id: string, payload: { action_type: string; target: string; details?: string; ttl_hours?: number }) =>
+    request<{ status: string; action_status: string; is_simulated: boolean; blocklist_entry_id: number | null; message: string }>(`/incidents/${id}/actions`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
@@ -297,13 +284,7 @@ export const api = {
     request<{ status: string; correlations_created: number; details: any[] }>('/incidents/correlate', {
       method: 'POST',
     }),
-  exportIncidentReportText: async (id: string): Promise<string> => {
-    const headers: Record<string, string> = {};
-    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-    const res = await fetch(`${BASE_URL}/incidents/${id}/export?format=text`, { headers });
-    if (!res.ok) throw new Error('Report export failed');
-    return res.text();
-  },
+  exportIncidentReportText: (id: string): Promise<string> => requestText(`/incidents/${id}/export?format=text`),
 
   // Forensics
   getForensics: (id: string) => request<ForensicInvestigation>(`/forensics/${id}`),

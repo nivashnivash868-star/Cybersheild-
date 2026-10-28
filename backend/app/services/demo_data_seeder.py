@@ -3,8 +3,10 @@ from sqlalchemy.orm import Session
 from app.models import (
     User, Employee, MonitoringSource, SecretFinding, NotificationDelivery,
     SecurityEvent, ThreatAnalysis, Incident, IncidentEvidence,
-    InvestigationNote, ResponseAction, AuditLog, utc_now
+    InvestigationNote, ResponseAction, AuditLog, utc_now,
+    UserSession, PasswordResetToken, BlocklistEntry, FeedToken
 )
+from app.config import settings
 from app.utils.auth import get_password_hash
 
 def seed_demo_soc_data(db: Session, force_reset: bool = False):
@@ -17,12 +19,19 @@ def seed_demo_soc_data(db: Session, force_reset: bool = False):
     - Automated notification deliveries and audit trail
     - Multi-stage incidents and security events
     """
+    if not settings.DEMO_MODE:
+        return {"status": "disabled", "message": "Demo data is off (DEMO_MODE is not set)."}
+
     user_count = db.query(User).count()
     if user_count > 0 and not force_reset:
         return {"status": "skipped", "message": f"Database already contains {user_count} users."}
 
     if force_reset:
         db.query(AuditLog).delete()
+        db.query(UserSession).delete()
+        db.query(PasswordResetToken).delete()
+        db.query(BlocklistEntry).delete()
+        db.query(FeedToken).delete()
         db.query(NotificationDelivery).delete()
         db.query(SecretFinding).delete()
         db.query(ResponseAction).delete()
@@ -301,7 +310,7 @@ def seed_demo_soc_data(db: Session, force_reset: bool = False):
             severity="Critical",
             title="[CYBERSHIELD CRITICAL] Staged C2 Egress Detected for FINANCE-WS-04",
             body_preview="Suricata NIDS detected periodic 60s HTTPS beaconing to 185.220.101.45. Workstation finance asset isolated.",
-            delivery_status="DELIVERED",
+            delivery_status="SENT",
             retry_count=0,
             incident_id="INC-2026-0042",
             event_id="SEC-2026-00103",
@@ -316,7 +325,7 @@ def seed_demo_soc_data(db: Session, force_reset: bool = False):
             severity="High",
             title="Security Advisory: Malicious Link Warning",
             body_preview="Notice for alex.turner@enterprise-corp.com: A link targeting Microsoft 365 credentials in your inbound queue was intercepted and blocked.",
-            delivery_status="DELIVERED",
+            delivery_status="SENT",
             retry_count=0,
             incident_id="INC-2026-0042",
             event_id="SEC-2026-00101",
@@ -331,7 +340,7 @@ def seed_demo_soc_data(db: Session, force_reset: bool = False):
             severity="High",
             title="CYBERSHIELD Security Advisory",
             body_preview="CYBERSHIELD Alert: Suspicious email intercepted. Please verify your portal advisories.",
-            delivery_status="DELIVERED",
+            delivery_status="SENT",
             retry_count=0,
             incident_id="INC-2026-0042",
             dedup_key="dedup_sms_alex",

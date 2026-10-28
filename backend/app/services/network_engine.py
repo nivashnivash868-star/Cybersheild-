@@ -1,3 +1,4 @@
+import uuid
 import collections
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Tuple
@@ -60,7 +61,7 @@ class NetworkAnomalyDetector:
                 first_rec = fails[0]
                 target_user = first_rec.user_account or "root/admin"
                 alerts.append(NetworkAnomalyAlert(
-                    event_id=f"NET-BRUTE-{src_ip.replace('.', '')[-6:]}",
+                    event_id=f"NET-BRUTE-{uuid.uuid4().hex[:10].upper()}",
                     timestamp=first_rec.timestamp or now_str,
                     source_ip=src_ip,
                     destination_ip=first_rec.destination_ip,
@@ -88,7 +89,7 @@ class NetworkAnomalyDetector:
                 # Find a sample record for IPs
                 sample_rec = next(r for r in records if r.source_ip == src_ip)
                 alerts.append(NetworkAnomalyAlert(
-                    event_id=f"NET-SCAN-{src_ip.replace('.', '')[-6:]}",
+                    event_id=f"NET-SCAN-{uuid.uuid4().hex[:10].upper()}",
                     timestamp=sample_rec.timestamp or now_str,
                     source_ip=src_ip,
                     destination_ip=sample_rec.destination_ip,
@@ -118,7 +119,7 @@ class NetworkAnomalyDetector:
             # Data Exfiltration Rule
             if rec.bytes_transferred >= DATA_EXFIL_BYTE_THRESHOLD:
                 alerts.append(NetworkAnomalyAlert(
-                    event_id=f"NET-EXFIL-{rec.source_ip.replace('.', '')[-6:]}",
+                    event_id=f"NET-EXFIL-{uuid.uuid4().hex[:10].upper()}",
                     timestamp=rec.timestamp or now_str,
                     source_ip=rec.source_ip,
                     destination_ip=rec.destination_ip,
@@ -142,7 +143,7 @@ class NetworkAnomalyDetector:
             # High-risk remote admin ports (e.g. 4444 Metasploit, 3389 RDP exposed to WAN, 23 Telnet)
             if rec.destination_port in [4444, 1337, 6667, 23, 31337]:
                 alerts.append(NetworkAnomalyAlert(
-                    event_id=f"NET-C2-{rec.source_ip.replace('.', '')[-6:]}",
+                    event_id=f"NET-C2-{uuid.uuid4().hex[:10].upper()}",
                     timestamp=rec.timestamp or now_str,
                     source_ip=rec.source_ip,
                     destination_ip=rec.destination_ip,
@@ -170,7 +171,7 @@ class NetworkAnomalyDetector:
                 score_val = int(abs(self.iso_forest.score_samples(sample_features)[0]) * 100)
                 score_val = min(max(score_val, 65), 89)
                 alerts.append(NetworkAnomalyAlert(
-                    event_id=f"NET-ISO-{rec.source_ip.replace('.', '')[-6:]}",
+                    event_id=f"NET-ISO-{uuid.uuid4().hex[:10].upper()}",
                     timestamp=rec.timestamp or now_str,
                     source_ip=rec.source_ip,
                     destination_ip=rec.destination_ip,

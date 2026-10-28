@@ -1,3 +1,4 @@
+import uuid
 import re
 import hashlib
 from datetime import datetime, timezone
@@ -103,7 +104,7 @@ class DLPEngine:
                 sec_hash = hash_secret(raw_secret)
                 masked = mask_secret(raw_secret)
                 
-                finding_id = f"DLP-{sec_hash[:8].upper()}-{now_ts % 10000}"
+                finding_id = f"DLP-{sec_hash[:8].upper()}-{uuid.uuid4().hex[:6].upper()}"
                 findings.append({
                     "finding_id": finding_id,
                     "secret_type": p["type"],

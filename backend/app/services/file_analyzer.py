@@ -1,3 +1,4 @@
+import uuid
 import hashlib
 import math
 import mimetypes
@@ -192,7 +193,7 @@ class FileAnalyzer:
             precautions.insert(0, f"Submit hash {sha256[:16]}... to corporate perimeter firewall and endpoint AV blacklist immediately.")
 
         return FileAnalysisResponse(
-            analysis_id=f"TA-FILE-{int(datetime.now(timezone.utc).timestamp())}",
+            analysis_id=f"TA-FILE-{uuid.uuid4().hex[:12].upper()}",
             filename=filename,
             filesize_bytes=filesize,
             mime_type=mime_type,

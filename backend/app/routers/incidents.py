@@ -4,12 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Incident, IncidentEvidence, InvestigationNote, ResponseAction, AuditLog, SecurityEvent
+from app.models import Incident, IncidentEvidence, InvestigationNote, ResponseAction, AuditLog, SecurityEvent, User
 from app.schemas import (
     IncidentDetailResponse, IncidentStatusUpdateRequest, IncidentAssignRequest,
     AddNoteRequest, ExecuteResponseActionRequest
 )
+from app.services import blocklist as blocklist_service
 from app.services.correlation_engine import correlation_engine
+from app.utils.auth import ADMIN_ROLES, require_authenticated_user
 
 router = APIRouter(prefix="/incidents", tags=["Threat Prevention & Incident Response"])
 
@@ -46,7 +48,8 @@ def get_incident_detail(incident_id: str, db: Session = Depends(get_db)):
     return incident
 
 @router.patch("/{incident_id}/status")
-def update_incident_status(incident_id: str, payload: IncidentStatusUpdateRequest, db: Session = Depends(get_db)):
+def update_incident_status(incident_id: str, payload: IncidentStatusUpdateRequest, db: Session = Depends(get_db),
+                           user: User = Depends(require_authenticated_user)):
     valid_statuses = ["New", "Investigating", "Contained", "Resolved", "False Positive"]
     if payload.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status '{payload.status}'. Allowed: {valid_statuses}")
@@ -63,14 +66,14 @@ def update_incident_status(incident_id: str, payload: IncidentStatusUpdateReques
     if payload.comment:
         note = InvestigationNote(
             incident_id=incident_id,
-            analyst_name=payload.analyst_name or "SOC Analyst",
+            analyst_name=user.full_name,
             note_text=f"[Status changed from {old_status} to {payload.status}] {payload.comment}"
         )
         db.add(note)
 
     audit = AuditLog(
         action="INCIDENT_STATUS_CHANGE",
-        actor=payload.analyst_name or "SOC Analyst",
+        actor=user.email,
         resource_type="Incident",
         resource_id=incident_id,
         details=f"Status transitioned from {old_status} to {payload.status}. Comment: {payload.comment or 'None'}"
@@ -81,7 +84,8 @@ def update_incident_status(incident_id: str, payload: IncidentStatusUpdateReques
     return {"status": "success", "incident_id": incident_id, "new_status": payload.status}
 
 @router.patch("/{incident_id}/assign")
-def assign_incident_analyst(incident_id: str, payload: IncidentAssignRequest, db: Session = Depends(get_db)):
+def assign_incident_analyst(incident_id: str, payload: IncidentAssignRequest, db: Session = Depends(get_db),
+                            user: User = Depends(require_authenticated_user)):
     incident = db.query(Incident).filter(Incident.incident_id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found.")
@@ -94,7 +98,7 @@ def assign_incident_analyst(incident_id: str, payload: IncidentAssignRequest, db
 
     audit = AuditLog(
         action="INCIDENT_ASSIGNED",
-        actor="SOC Lead",
+        actor=user.email,
         resource_type="Incident",
         resource_id=incident_id,
         details=f"Assigned analyst updated from '{old_analyst}' to '{payload.assigned_analyst}'"
@@ -105,21 +109,22 @@ def assign_incident_analyst(incident_id: str, payload: IncidentAssignRequest, db
     return {"status": "success", "incident_id": incident_id, "assigned_analyst": payload.assigned_analyst}
 
 @router.post("/{incident_id}/notes")
-def add_investigation_note(incident_id: str, payload: AddNoteRequest, db: Session = Depends(get_db)):
+def add_investigation_note(incident_id: str, payload: AddNoteRequest, db: Session = Depends(get_db),
+                           user: User = Depends(require_authenticated_user)):
     incident = db.query(Incident).filter(Incident.incident_id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found.")
 
     note = InvestigationNote(
         incident_id=incident_id,
-        analyst_name=payload.analyst_name,
+        analyst_name=user.full_name,
         note_text=payload.note_text
     )
     db.add(note)
 
     audit = AuditLog(
         action="NOTE_ADDED",
-        actor=payload.analyst_name,
+        actor=user.email,
         resource_type="Incident",
         resource_id=incident_id,
         details=f"Added forensic note: {payload.note_text[:60]}..."
@@ -129,51 +134,60 @@ def add_investigation_note(incident_id: str, payload: AddNoteRequest, db: Sessio
 
     return {"status": "success", "note_id": note.id, "created_at": note.created_at}
 
+BLOCKING_ACTIONS = {"FIREWALL_BLOCK", "IP_BLOCK", "URL_BLOCK", "DOMAIN_BLOCK"}
+MANUAL_ACTIONS = {"HOST_ISOLATION", "SESSION_REVOKE", "EMAIL_PURGE", "SECRET_REVOKE"}
+
+
 @router.post("/{incident_id}/actions")
-def execute_response_action(incident_id: str, payload: ExecuteResponseActionRequest, db: Session = Depends(get_db)):
+def execute_response_action(incident_id: str, payload: ExecuteResponseActionRequest, db: Session = Depends(get_db),
+                            user: User = Depends(require_authenticated_user)):
+    """
+    Blocking actions create a blocklist entry: administrators publish it immediately, analysts' proposals wait
+    for approval. The entry is then served to firewalls / DNS sinkholes through the authenticated feeds.
+    Other action types are recorded as manual work: the platform has no integration that performs them.
+    """
     incident = db.query(Incident).filter(Incident.incident_id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found.")
+    if payload.action_type not in BLOCKING_ACTIONS | MANUAL_ACTIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown action type. Allowed: {sorted(BLOCKING_ACTIONS | MANUAL_ACTIONS)}")
 
     now = datetime.now(timezone.utc)
-    
-    # Create or update response action
-    action = ResponseAction(
-        incident_id=incident_id,
-        action_type=payload.action_type,
-        target=payload.target,
-        status="SIMULATED_EXECUTED",
-        details=payload.details or f"Simulated {payload.action_type} executed for target {payload.target}.",
-        is_simulated=True,
-        executed_by="Active SOC Analyst",
-        executed_at=now
-    )
-    db.add(action)
-
-    # If action is containment, advance incident status
-    if payload.action_type in ["FIREWALL_BLOCK", "HOST_ISOLATION"] and incident.status in ["New", "Investigating"]:
-        incident.status = "Contained"
-
-    incident.updated_at = now
-
-    audit = AuditLog(
-        action="RESPONSE_ACTION_SIMULATED",
-        actor="Active SOC Analyst",
-        resource_type="Incident",
-        resource_id=incident_id,
-        details=f"Executed simulated response '{payload.action_type}' against target '{payload.target}'."
-    )
-    db.add(audit)
-    db.commit()
-
-    return {
-        "status": "success",
-        "action_id": action.id,
-        "is_simulated": True,
-        "message": (
-            f"Simulated response action '{payload.action_type}' recorded successfully. "
-            "NOTE: Action is simulated. Production firewall/EDR push requires active provider API credentials."
+    if payload.action_type in BLOCKING_ACTIONS:
+        reason = payload.details or f"{payload.action_type} from {incident_id}: {incident.title}"
+        entry, created = blocklist_service.propose(
+            db, payload.target, reason, user.email, auto_approve=user.role in ADMIN_ROLES,
+            incident_id=incident_id, ttl_hours=payload.ttl_hours,
         )
+        published = entry.status == "ACTIVE"
+        action = ResponseAction(
+            incident_id=incident_id, action_type=payload.action_type, target=entry.value,
+            status="PUBLISHED_TO_FEED" if published else "PENDING_APPROVAL",
+            details=(f"Blocklist entry #{entry.id} ({entry.indicator_type}) "
+                     f"{'published until ' + str(entry.expires_at) + ' UTC' if published else 'awaiting administrator approval'}."),
+            is_simulated=False, executed_by=user.email, executed_at=now if published else None,
+        )
+        message = (f"Blocklist entry #{entry.id} is {'live in the feeds' if published else 'pending approval'}. "
+                   "Enforcement happens when your firewall or DNS sinkhole next pulls the feed.")
+    else:
+        entry = None
+        action = ResponseAction(
+            incident_id=incident_id, action_type=payload.action_type, target=payload.target,
+            status="RECORDED_MANUAL",
+            details=payload.details or "Recorded by the analyst. The platform did not perform this action.",
+            is_simulated=False, executed_by=user.email, executed_at=now,
+        )
+        message = "Recorded as a manual action. The platform has no integration that performs it."
+    db.add(action)
+    incident.updated_at = now
+    db.add(AuditLog(
+        action="RESPONSE_ACTION", actor=user.email, resource_type="Incident", resource_id=incident_id,
+        details=f"{payload.action_type} on '{action.target}' -> {action.status}.",
+    ))
+    db.commit()
+    return {
+        "status": "success", "action_id": action.id, "action_status": action.status, "is_simulated": False,
+        "blocklist_entry_id": entry.id if entry else None, "message": message,
     }
 
 @router.post("/correlate")

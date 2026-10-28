@@ -5,11 +5,11 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Employee, SecurityEvent, Incident, User, AuditLog
 from app.schemas import EmployeeCreateRequest, EmployeeUpdateRequest, EmployeeResponse, SecurityEventResponse
-from app.utils.auth import require_roles, require_authenticated_user
+from app.utils.auth import require_roles, require_authenticated_user, ADMIN_ROLES, STAFF_ROLES
 
 router = APIRouter(prefix="/employees", tags=["Employee Management"])
 
-@router.get("", response_model=List[EmployeeResponse])
+@router.get("", response_model=List[EmployeeResponse], dependencies=[Depends(require_roles(STAFF_ROLES))])
 def list_employees(
     search: Optional[str] = None,
     department: Optional[str] = None,
@@ -86,7 +86,7 @@ def create_employee(
 
     return EmployeeResponse.model_validate(emp)
 
-@router.get("/{employee_id}", response_model=EmployeeResponse)
+@router.get("/{employee_id}", response_model=EmployeeResponse, dependencies=[Depends(require_roles(STAFF_ROLES))])
 def get_employee_detail(employee_id: str, db: Session = Depends(get_db)):
     emp = db.query(Employee).filter(Employee.employee_id == employee_id).first()
     if not emp:
@@ -190,7 +190,10 @@ def bulk_import_employees(
     }
 
 @router.get("/{employee_id}/events", response_model=List[SecurityEventResponse])
-def get_employee_security_events(employee_id: str, db: Session = Depends(get_db)):
+def get_employee_security_events(employee_id: str, db: Session = Depends(get_db),
+                                 current_user: User = Depends(require_authenticated_user)):
+    if current_user.role not in STAFF_ROLES and current_user.employee_id != employee_id:
+        raise HTTPException(status_code=403, detail="You can only view your own security events.")
     emp = db.query(Employee).filter(Employee.employee_id == employee_id).first()
     if not emp:
         raise HTTPException(status_code=404, detail=f"Employee '{employee_id}' not found.")

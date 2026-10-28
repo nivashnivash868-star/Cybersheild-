@@ -76,13 +76,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPassword || newPassword.length < 8) {
-      alert('Password must be at least 8 characters long.');
+    if (!curPassword || !newPassword || newPassword.length < 12) {
+      alert('Enter your current password and a new one of at least 12 characters.');
       return;
     }
     try {
       const res = await api.changePassword({
-        current_password: curPassword || undefined,
+        current_password: curPassword,
         new_password: newPassword,
       });
       setPwMsg(res.message);

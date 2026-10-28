@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field, ConfigDict, EmailStr
 
 # --- Authentication & Users ---
 class UserLoginRequest(BaseModel):
-    email: str = Field(..., description="Company user email")
-    password: str = Field(..., min_length=1)
+    email: str = Field(..., max_length=255, description="Company user email")
+    password: str = Field(..., min_length=1, max_length=256)
 
 class UserProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -19,35 +19,53 @@ class UserProfileResponse(BaseModel):
     department: Optional[str] = None
     created_at: datetime
     last_login: Optional[datetime] = None
+    mfa_enabled: bool = False
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+class SessionStateResponse(BaseModel):
+    """What the SPA needs after login / on reload. No credential is returned: the session is an HttpOnly cookie."""
     user: UserProfileResponse
+    mfa_state: str = Field(..., description="ok | verify | enroll")
+    must_change_password: bool = False
+
+class MfaCodeRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=8)
+
+class MfaSetupResponse(BaseModel):
+    secret: str
+    otpauth_uri: str
+
+class MfaDisableRequest(BaseModel):
+    password: str = Field(..., max_length=256)
+    code: str = Field(..., min_length=6, max_length=8)
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., max_length=255)
 
 class PasswordResetRequest(BaseModel):
-    email: str
-    new_password: str = Field(..., min_length=8)
+    token: str = Field(..., min_length=20, max_length=200)
+    new_password: str = Field(..., min_length=1, max_length=256)
 
 class UserProfileUpdateRequest(BaseModel):
-    full_name: Optional[str] = None
-    department: Optional[str] = None
-    phone_number: Optional[str] = None
-    timezone: Optional[str] = None
-    notification_preferences: Optional[Dict[str, bool]] = None
-    two_factor_enabled: Optional[bool] = None
+    full_name: Optional[str] = Field(None, max_length=128)
+    department: Optional[str] = Field(None, max_length=128)
+    phone_number: Optional[str] = Field(None, max_length=64)
 
 class ChangePasswordRequest(BaseModel):
-    current_password: Optional[str] = None
-    new_password: str = Field(..., min_length=8)
+    current_password: str = Field(..., max_length=256)
+    new_password: str = Field(..., max_length=256)
 
-class SSOLoginRequest(BaseModel):
-    provider: str = Field(..., description="google or microsoft")
-    email: str
-    name: Optional[str] = None
+class UserCreateRequest(BaseModel):
+    email: str = Field(..., max_length=255)
+    full_name: str = Field(..., max_length=128)
+    role: str
+    department: Optional[str] = Field(None, max_length=128)
+    employee_id: Optional[str] = Field(None, max_length=64)
+    temporary_password: str = Field(..., max_length=256)
+
+class UserAdminUpdateRequest(BaseModel):
     role: Optional[str] = None
+    is_active: Optional[bool] = None
 
-# --- Employee Management ---
 class EmployeeCreateRequest(BaseModel):
     employee_id: str = Field(..., min_length=3, max_length=64, description="Unique employee identifier e.g. EMP-1042")
     full_name: str = Field(..., min_length=2, max_length=128)
@@ -160,6 +178,8 @@ class NotificationDeliveryResponse(BaseModel):
     incident_id: Optional[str] = None
     event_id: Optional[str] = None
     sent_at: datetime
+    dispatched_at: Optional[datetime] = None
+    last_error: Optional[str] = None
 
 # --- Phishing & Scam Detection ---
 class PhishingAnalysisRequest(BaseModel):
@@ -271,7 +291,7 @@ class SecurityEventResponse(BaseModel):
     incident_id: Optional[str] = None
 
 class AcknowledgeEventRequest(BaseModel):
-    analyst_name: Optional[str] = "SOC Analyst"
+    analyst_name: Optional[str] = None  # ignored: the actor is always the signed-in user
 
 # --- Incidents & Response ---
 class IncidentEvidenceItem(BaseModel):
@@ -328,20 +348,21 @@ class IncidentDetailResponse(BaseModel):
 
 class IncidentStatusUpdateRequest(BaseModel):
     status: str = Field(..., description="New, Investigating, Contained, Resolved, False Positive")
-    analyst_name: Optional[str] = "SOC Analyst"
-    comment: Optional[str] = None
+    analyst_name: Optional[str] = Field(None, description="Ignored: the actor is always the signed-in user.")
+    comment: Optional[str] = Field(None, max_length=2000)
 
 class IncidentAssignRequest(BaseModel):
-    assigned_analyst: str
+    assigned_analyst: str = Field(..., max_length=128)
 
 class AddNoteRequest(BaseModel):
-    analyst_name: str
-    note_text: str
+    analyst_name: Optional[str] = Field(None, description="Ignored: the actor is always the signed-in user.")
+    note_text: str = Field(..., min_length=1, max_length=5000)
 
 class ExecuteResponseActionRequest(BaseModel):
-    action_type: str = Field(..., description="FIREWALL_BLOCK, HOST_ISOLATION, SESSION_REVOKE, EMAIL_PURGE, SECRET_REVOKE, URL_BLOCK")
-    target: str
-    details: Optional[str] = ""
+    action_type: str = Field(..., description="FIREWALL_BLOCK, IP_BLOCK, URL_BLOCK, DOMAIN_BLOCK publish to the blocklist; the rest are recorded as manual.")
+    target: str = Field(..., max_length=512)
+    details: Optional[str] = Field("", max_length=2000)
+    ttl_hours: Optional[int] = Field(None, ge=1, le=24 * 30)
 
 # --- Forensics ---
 class ForensicArtifact(BaseModel):

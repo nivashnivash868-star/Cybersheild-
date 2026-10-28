@@ -88,9 +88,10 @@ export const IncidentResponsePage: React.FC<Props> = ({
         target: 'https://secure-login-okta-verify.com',
         details: `Executed ${actionType} from SOC incident console.`,
       });
-      setActionNotice(`Action executed: ${res.message}`);
+      setActionNotice(res.message);
+      loadIncidents();
     } catch (err: any) {
-      setActionNotice(`Action recorded in audit log: ${actionType}`);
+      setActionNotice(`Action failed, nothing was recorded: ${err.message}`);
     }
   };
 
@@ -99,14 +100,13 @@ export const IncidentResponsePage: React.FC<Props> = ({
     if (!activeIncident || !newNote.trim()) return;
     try {
       await api.addIncidentNote(activeIncident.incident_id, {
-        analyst_name: 'Sarah Chen (Lead SOC Analyst)',
         note_text: newNote.trim(),
       });
       setShowNoteModal(false);
       setNewNote('');
       loadIncidents();
     } catch (err: any) {
-      alert(`Note saved locally: ${err.message}`);
+      alert(`Note was not saved: ${err.message}`);
       setShowNoteModal(false);
     }
   };

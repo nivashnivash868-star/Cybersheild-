@@ -1,3 +1,4 @@
+import uuid
 import re
 import math
 from datetime import datetime, timezone
@@ -85,7 +86,7 @@ class PhishingDetector:
         if not is_safe:
             # Blocked SSRF / private targets
             return PhishingAnalysisResponse(
-                analysis_id=f"TA-SSRF-{int(datetime.now(timezone.utc).timestamp())}",
+                analysis_id=f"TA-SSRF-{uuid.uuid4().hex[:12].upper()}",
                 timestamp=datetime.now(timezone.utc),
                 submission_type="url",
                 target=raw_url,
@@ -260,7 +261,7 @@ class PhishingDetector:
         precautions = self._build_precautions(risk_category, "url")
 
         return PhishingAnalysisResponse(
-            analysis_id=f"TA-URL-{int(datetime.now(timezone.utc).timestamp())}",
+            analysis_id=f"TA-URL-{uuid.uuid4().hex[:12].upper()}",
             timestamp=datetime.now(timezone.utc),
             submission_type="url",
             target=raw_url,
@@ -377,7 +378,7 @@ class PhishingDetector:
         precautions = self._build_precautions(risk_category, submission_type)
 
         return PhishingAnalysisResponse(
-            analysis_id=f"TA-MSG-{int(datetime.now(timezone.utc).timestamp())}",
+            analysis_id=f"TA-MSG-{uuid.uuid4().hex[:12].upper()}",
             timestamp=datetime.now(timezone.utc),
             submission_type=submission_type,
             target=(email_subject or content[:60] + "..."),

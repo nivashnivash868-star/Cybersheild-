@@ -1,20 +1,4 @@
 import pytest
-from fastapi.testclient import TestClient
-from app.main import app
-from app.database import Base, engine, SessionLocal
-from app.services.demo_data_seeder import seed_demo_soc_data
-
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_database():
-    Base.metadata.create_all(bind=engine)
-    with SessionLocal() as db:
-        seed_demo_soc_data(db=db, force_reset=True)
-    yield
-
-@pytest.fixture
-def client():
-    with TestClient(app) as c:
-        yield c
 
 def test_system_health_endpoint(client):
     response = client.get("/api/v1/system/health")

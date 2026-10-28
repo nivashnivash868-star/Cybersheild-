@@ -31,6 +31,7 @@ export type NavTab =
   | 'url_warning'
   | 'reports'
   | 'notifications'
+  | 'blocklist'
   | 'settings'
   | 'system';
 
@@ -373,6 +374,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <BarChart3 className="w-4 h-4 text-slate-500 dark:text-slate-400" />
               <span>Reports</span>
             </button>
+
+            {/* Blocklist: the prevention control. Staff only. */}
+            {userRole !== 'Employee' && (
+              <button
+                onClick={() => handleNav('blocklist')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
+                  currentTab === 'blocklist'
+                    ? 'bg-sky-50 dark:bg-sky-600/20 text-sky-700 dark:text-sky-300 font-semibold'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                <ShieldAlert className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                <span>Blocklist</span>
+              </button>
+            )}
 
             {/* 12. Notifications (Screen 12) */}
             <button

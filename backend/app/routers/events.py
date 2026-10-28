@@ -3,7 +3,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import SecurityEvent, AuditLog
+from app.models import SecurityEvent, AuditLog, User
+from app.utils.auth import require_authenticated_user
 from app.schemas import SecurityEventResponse, AcknowledgeEventRequest
 
 router = APIRouter(prefix="/events", tags=["Unified Security Events"])
@@ -47,13 +48,14 @@ def list_security_events(
 def acknowledge_security_event(
     event_id: str,
     payload: Optional[AcknowledgeEventRequest] = Body(default=None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(require_authenticated_user),
 ):
     ev = db.query(SecurityEvent).filter(SecurityEvent.event_id == event_id).first()
     if not ev:
         raise HTTPException(status_code=404, detail=f"Event '{event_id}' not found.")
 
-    analyst = payload.analyst_name if payload and payload.analyst_name else "SOC Analyst"
+    analyst = user.email
     now = datetime.now(timezone.utc)
 
     ev.is_acknowledged = True

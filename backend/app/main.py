@@ -1,17 +1,24 @@
+import asyncio
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from app.bootstrap import bootstrap_admin
 from app.config import settings
 from app.database import engine, Base, SessionLocal
 from app.services.demo_data_seeder import seed_demo_soc_data
+from app.utils import audit as _audit_chain  # noqa: F401  (registers the audit hash-chain hook)
+from app.utils.auth import STAFF_ROLES, ALL_ROLES, require_roles
+from app.utils.context import client_ip_var, request_id_var
+from app.worker import run_forever
 from app.routers import (
     dashboard, phishing, file_analysis, network,
     incidents, forensics, events, system,
-    auth, employees, monitoring, dlp, url_warning, alerts
+    auth, employees, monitoring, dlp, url_warning, alerts, users, blocklist, feeds
 )
 
 # Configure logging
@@ -27,13 +34,17 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing enterprise database schema...")
     Base.metadata.create_all(bind=engine)
     
-    # Auto-seed synthetic cybersecurity data for demonstration if empty
     with SessionLocal() as db:
-        res = seed_demo_soc_data(db=db, force_reset=False)
-        logger.info(f"Database seed check: {res}")
-        
-    logger.info("CYBERSHIELD AI Enterprise backend successfully started.")
+        if settings.DEMO_MODE:
+            logger.warning("DEMO_MODE is on: seeding fabricated demo data with known passwords.")
+            logger.info(f"Database seed check: {seed_demo_soc_data(db=db, force_reset=False)}")
+        bootstrap_admin(db)
+
+    worker = asyncio.create_task(run_forever()) if settings.OUTBOX_WORKER_ENABLED else None
+    logger.info("CYBERSHIELD AI backend started (environment=%s).", settings.ENVIRONMENT)
     yield
+    if worker:
+        worker.cancel()
     logger.info("CYBERSHIELD AI backend shutting down.")
 
 app = FastAPI(
@@ -46,32 +57,71 @@ app = FastAPI(
     ),
     version="2.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# CORS: only explicitly configured origins (the bundled UI is same-origin and needs none).
+if settings.CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "X-CSRF-Token"],
+    )
+
+_CSP = (
+    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+    "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
 
-# Register API Routers under /api/v1 (and /v1 in case of path rewriting)
+
+@app.middleware("http")
+async def request_context_and_headers(request: Request, call_next):
+    rid = uuid.uuid4().hex
+    t1 = request_id_var.set(rid)
+    t2 = client_ip_var.set(request.client.host if request.client else None)
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_var.reset(t1)
+        client_ip_var.reset(t2)
+    response.headers["X-Request-ID"] = rid
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.path.startswith("/api") or request.url.path.startswith("/v1"):
+        response.headers["Cache-Control"] = "no-store"
+    elif not request.url.path.startswith("/docs") and not request.url.path.startswith("/redoc"):
+        response.headers["Content-Security-Policy"] = _CSP
+    if settings.cookie_secure:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+# Deny by default: every router needs a signed-in session and the minimum role below. Routers that need
+# stricter or different rules (auth, system, users, blocklist, feeds) declare them per route.
+_STAFF = [Depends(require_roles(STAFF_ROLES))]
+_ANY_USER = [Depends(require_roles(ALL_ROLES))]
 api_routers = [
-    auth.router, employees.router, monitoring.router, dlp.router,
-    url_warning.router, alerts.router, dashboard.router, phishing.router,
-    file_analysis.router, network.router, incidents.router,
-    forensics.router, events.router, system.router
+    (auth.router, []),                       # public routes + per-route session checks
+    (system.router, []),                     # /health public; the rest per route
+    (feeds.router, []),                      # feed-token auth
+    (users.router, []),                      # Super Admin per route
+    (blocklist.router, []),                  # per route
+    (employees.router, _ANY_USER),           # staff-only except an employee's own events (per route)
+    (monitoring.router, _STAFF), (dlp.router, _STAFF), (alerts.router, _STAFF), (dashboard.router, _STAFF),
+    (file_analysis.router, _STAFF), (network.router, _STAFF), (incidents.router, _STAFF),
+    (forensics.router, _STAFF), (events.router, _STAFF),
+    (phishing.router, _ANY_USER), (url_warning.router, _ANY_USER),
 ]
 
-for router in api_routers:
-    app.include_router(router, prefix=settings.API_V1_PREFIX)
+for router, deps in api_routers:
+    app.include_router(router, prefix=settings.API_V1_PREFIX, dependencies=deps)
     # Also support /v1 if hosting service strips /api prefix
-    app.include_router(router, prefix="/v1")
+    app.include_router(router, prefix="/v1", dependencies=deps)
 
 # API Platform Info Endpoint
 @app.get("/api")

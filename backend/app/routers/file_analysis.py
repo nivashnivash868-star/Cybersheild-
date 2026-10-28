@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
@@ -51,7 +52,7 @@ async def analyze_uploaded_file(file: UploadFile = File(...), db: Session = Depe
     # If high or critical risk, add SecurityEvent to SOC triage feed
     if result.risk_score >= 50:
         event_obj = SecurityEvent(
-            event_id=f"SEC-FILE-{int(datetime.now(timezone.utc).timestamp()) % 100000}",
+            event_id=f"SEC-FILE-{uuid.uuid4().hex[:12].upper()}",
             timestamp=datetime.now(timezone.utc),
             event_source="Endpoint File Analyzer",
             threat_category=f"Malicious File / {result.risk_category}",

@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Body
@@ -5,7 +6,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import MonitoringSource, SecurityEvent, AuditLog
 from app.schemas import MonitoringSourceResponse, SecurityEventResponse
+from app.config import settings
 from app.services.alert_engine import alert_engine
+from app.utils.auth import ADMIN_ROLES, require_roles
 
 router = APIRouter(prefix="/monitoring", tags=["24/7 Security Monitoring Engine"])
 
@@ -14,7 +17,7 @@ def list_monitoring_sources(db: Session = Depends(get_db)):
     sources = db.query(MonitoringSource).order_by(MonitoringSource.id.asc()).all()
     return sources
 
-@router.post("/sources/{source_id}/heartbeat")
+@router.post("/sources/{source_id}/heartbeat", dependencies=[Depends(require_roles(ADMIN_ROLES))])
 def record_source_heartbeat(source_id: str, status_val: str = "ACTIVE", db: Session = Depends(get_db)):
     src = db.query(MonitoringSource).filter(MonitoringSource.source_id == source_id).first()
     if not src:
@@ -25,7 +28,7 @@ def record_source_heartbeat(source_id: str, status_val: str = "ACTIVE", db: Sess
     db.commit()
     return {"status": "success", "source_id": source_id, "last_heartbeat": src.last_heartbeat}
 
-@router.post("/simulate-pulse", response_model=SecurityEventResponse)
+@router.post("/simulate-pulse", response_model=SecurityEventResponse, dependencies=[Depends(require_roles(ADMIN_ROLES))])
 def simulate_telemetry_pulse(
     source_id: str = Body(..., embed=True),
     employee_email: Optional[str] = Body(None, embed=True),
@@ -35,6 +38,8 @@ def simulate_telemetry_pulse(
     Simulates a live inbound security event from an authorized corporate monitoring source.
     Clearly marked as synthetic telemetry until external integrations are configured.
     """
+    if not settings.DEMO_MODE:
+        raise HTTPException(status_code=404, detail="Synthetic telemetry is only available when DEMO_MODE is on.")
     src = db.query(MonitoringSource).filter(MonitoringSource.source_id == source_id).first()
     if not src:
         raise HTTPException(status_code=404, detail=f"Source '{source_id}' not found.")
@@ -42,7 +47,7 @@ def simulate_telemetry_pulse(
     now = datetime.now(timezone.utc)
     now_ts = int(now.timestamp())
 
-    event_id = f"SEC-{source_id[:3]}-{now_ts % 100000}"
+    event_id = f"SEC-{source_id[:3]}-{uuid.uuid4().hex[:10].upper()}"
 
     threat_presets = {
         "SRC-M365-EMAIL": {

@@ -1,22 +1,8 @@
 import pytest
-from fastapi.testclient import TestClient
-from app.main import app
-from app.database import Base, engine, SessionLocal
-from app.services.demo_data_seeder import seed_demo_soc_data
 
-@pytest.fixture(scope="module", autouse=True)
-def setup_db():
-    Base.metadata.create_all(bind=engine)
-    with SessionLocal() as db:
-        seed_demo_soc_data(db=db, force_reset=True)
-    yield
 
-@pytest.fixture
-def client():
-    with TestClient(app) as c:
-        yield c
-
-def test_complete_enterprise_cybersecurity_workflow(client):
+def test_complete_enterprise_cybersecurity_workflow(admin, db):
+    client = admin
     """
     Validates Requirement 14 end-to-end workflow:
     1. Administrator logs in and adds an employee.
@@ -27,14 +13,8 @@ def test_complete_enterprise_cybersecurity_workflow(client):
     6. The employee receives an appropriate security advisory.
     7. The SOC analyst investigates and executes containment action.
     """
-    # 1. Admin Login
-    login_res = client.post("/api/v1/auth/login", json={
-        "email": "admin@cybershield.corp",
-        "password": "CyberShield@2026!"
-    })
-    assert login_res.status_code == 200
-    token = login_res.json()["access_token"]
-    auth_headers = {"Authorization": f"Bearer {token}"}
+    # 1. Administrator is signed in (cookie session) by the fixture.
+    auth_headers = {}
 
     # 2. Administrator adds an employee
     new_employee_payload = {
@@ -83,12 +63,14 @@ def test_complete_enterprise_cybersecurity_workflow(client):
     # Check SOC analyst got alert
     soc_alerts = [d for d in deliveries if d["recipient_type"] == "SOC_ANALYST"]
     assert len(soc_alerts) >= 1
-    assert soc_alerts[0]["delivery_status"] in ("DELIVERED", "SUPPRESSED_DUPLICATE")
+    # Queued for the outbox worker; nothing may claim DELIVERED without a provider confirmation.
+    assert soc_alerts[0]["delivery_status"] in ("QUEUED", "SUPPRESSED_DUPLICATE", "SENT", "NOT_CONFIGURED")
 
     # Check Employee got personalized warning
     emp_alerts = [d for d in deliveries if d["recipient_address"] == "jordan.lee@enterprise-corp.com"]
     assert len(emp_alerts) >= 1
     assert emp_alerts[0]["recipient_type"] == "EMPLOYEE"
+    assert emp_alerts[0]["delivery_status"] != "DELIVERED"
     # Verify no secret leakage
     assert "CyberShield@2026!" not in emp_alerts[0]["body_preview"]
 
@@ -106,16 +88,16 @@ def test_complete_enterprise_cybersecurity_workflow(client):
     # Analyst records containment action: Block Perimeter IP
     action_res = client.post(f"/api/v1/incidents/{target_inc_id}/actions", json={
         "action_type": "FIREWALL_BLOCK",
-        "target": "198.51.100.44",
-        "details": "Simulated firewall block for adversary host targeting Jordan Lee."
+        "target": "45.155.205.233",
+        "details": "Block adversary host targeting Jordan Lee."
     })
     assert action_res.status_code == 200
-    assert action_res.json()["is_simulated"] is True
+    assert action_res.json()["is_simulated"] is False
+    assert action_res.json()["action_status"] == "PUBLISHED_TO_FEED"  # admins publish immediately
 
     # Analyst updates incident status to Contained
     status_res = client.patch(f"/api/v1/incidents/{target_inc_id}/status", json={
         "status": "Contained",
-        "analyst_name": "Sarah Chen",
         "comment": "Malicious source blocked and employee verified."
     })
     assert status_res.status_code == 200

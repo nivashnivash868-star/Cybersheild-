@@ -8,6 +8,11 @@ from app.database import Base
 def utc_now():
     return datetime.now(timezone.utc)
 
+
+def naive_utc_now():
+    """UTC without tzinfo; matches how DateTime columns come back from SQLite and Postgres."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 class User(Base):
     __tablename__ = "users"
 
@@ -21,6 +26,47 @@ class User(Base):
     department = Column(String(128), nullable=True)
     created_at = Column(DateTime, default=utc_now, nullable=False)
     last_login = Column(DateTime, nullable=True)
+
+    # Credential hygiene and brute-force protection
+    password_changed_at = Column(DateTime, nullable=True)
+    must_change_password = Column(Boolean, default=False, nullable=False)
+    failed_login_count = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+
+    # TOTP multi-factor authentication. Secrets are stored encrypted (see utils/crypto.py).
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    totp_secret_enc = Column(Text, nullable=True)
+    totp_pending_enc = Column(Text, nullable=True)
+    totp_last_counter = Column(Integer, nullable=True)  # blocks replay of the last accepted code
+
+
+class UserSession(Base):
+    """Server-side session. Only the SHA-256 of the cookie token is stored."""
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    created_at = Column(DateTime, default=naive_utc_now, nullable=False)
+    last_seen_at = Column(DateTime, default=naive_utc_now, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
+    mfa_verified = Column(Boolean, default=False, nullable=False)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+
+    user = relationship("User")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    created_at = Column(DateTime, default=naive_utc_now, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
 
 
 class Employee(Base):
@@ -91,12 +137,21 @@ class NotificationDelivery(Base):
     severity = Column(String(16), index=True, nullable=False)
     title = Column(String(255), nullable=False)
     body_preview = Column(Text, nullable=False)  # Masked sanitized summary
-    delivery_status = Column(String(32), default="DELIVERED", index=True, nullable=False)  # DELIVERED, QUEUED, SUPPRESSED_DUPLICATE, FAILED
+    delivery_status = Column(String(32), default="QUEUED", index=True, nullable=False)
     retry_count = Column(Integer, default=0, nullable=False)
     incident_id = Column(String(64), nullable=True, index=True)
     event_id = Column(String(64), nullable=True, index=True)
     dedup_key = Column(String(128), nullable=True, index=True)
-    sent_at = Column(DateTime, default=utc_now, index=True, nullable=False)
+    sent_at = Column(DateTime, default=utc_now, index=True, nullable=False)  # when the alert was queued
+
+    # Outbox state. delivery_status: QUEUED -> SENT | FAILED (retries first) | NOT_CONFIGURED | SUPPRESSED_DUPLICATE.
+    # SENT means the SMTP server / SMS provider accepted the message, not that the recipient read it.
+    next_attempt_at = Column(DateTime, nullable=True, index=True)
+    dispatched_at = Column(DateTime, nullable=True)
+    last_error = Column(String(500), nullable=True)
+    provider_message_id = Column(String(128), nullable=True)
+    message_body = Column(Text, nullable=True)  # full text to send; wiped after sending when redact_after_send
+    redact_after_send = Column(Boolean, default=False, nullable=False)
 
 
 class SecurityEvent(Base):
@@ -235,3 +290,45 @@ class AuditLog(Base):
     resource_type = Column(String(64), index=True, nullable=False)
     resource_id = Column(String(64), index=True, nullable=False)
     details = Column(Text, nullable=True)
+
+    # Filled automatically on flush (see utils/audit.py). entry_hash = HMAC(prev_hash + record).
+    request_id = Column(String(64), nullable=True, index=True)
+    ip_address = Column(String(64), nullable=True)
+    prev_hash = Column(String(64), nullable=True)
+    entry_hash = Column(String(64), nullable=True, index=True)
+
+
+class BlocklistEntry(Base):
+    """An indicator proposed for blocking. Only ACTIVE entries are published in the feeds."""
+    __tablename__ = "blocklist_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    indicator_type = Column(String(16), index=True, nullable=False)  # ip, cidr, domain, url
+    value = Column(String(512), index=True, nullable=False)
+    reason = Column(Text, nullable=False)
+    incident_id = Column(String(64), nullable=True, index=True)
+    # PENDING_APPROVAL -> ACTIVE -> EXPIRED | REVOKED ; PENDING_APPROVAL -> REJECTED
+    status = Column(String(24), default="PENDING_APPROVAL", index=True, nullable=False)
+    ttl_hours = Column(Integer, nullable=False)
+    proposed_by = Column(String(128), nullable=False)
+    proposed_at = Column(DateTime, default=naive_utc_now, nullable=False)
+    decided_by = Column(String(128), nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+    decision_note = Column(String(500), nullable=True)
+    activated_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True, index=True)
+
+
+class FeedToken(Base):
+    """Credential a firewall / DNS sinkhole uses to pull the blocklist. Only the hash is stored."""
+    __tablename__ = "feed_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(128), unique=True, nullable=False)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    created_by = Column(String(128), nullable=False)
+    created_at = Column(DateTime, default=naive_utc_now, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
+    last_fetched_at = Column(DateTime, nullable=True)
+    last_fetched_version = Column(String(64), nullable=True)
+    last_fetched_ip = Column(String(64), nullable=True)

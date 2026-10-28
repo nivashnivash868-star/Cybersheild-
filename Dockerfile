@@ -1,39 +1,42 @@
-# ===== Stage 1: Build the React frontend =====
+# syntax=docker/dockerfile:1
+
+# ===== Stage 1: build the React frontend =====
 FROM node:22-slim AS frontend-build
 WORKDIR /build
-
-# Install dependencies first for better layer caching
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
-
-# Build the production bundle
+RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
-# Output is in /build/dist
 
-# ===== Stage 2: Python backend runtime =====
-FROM python:3.13-slim
-
-# Install OS dependencies needed by some Python wheels
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
+# ===== Stage 2: Python dependencies, built once =====
+FROM python:3.13-slim AS python-base
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /app/backend
 
-# Install Python dependencies first for better layer caching
-COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy backend source
+# ===== Stage 3: tests (docker build --target test .) =====
+FROM python-base AS test
+COPY backend/requirements.txt backend/requirements-dev.txt ./
+RUN pip install -r requirements-dev.txt
 COPY backend/ ./
+RUN python -m pytest -q
 
-# Copy the built frontend dist so FastAPI can serve it (SPA mode)
-# main.py resolves frontend dist as: <repo-root>/frontend/dist
-# With backend at /app/backend, repo root is /app, so dist goes to /app/frontend/dist
-COPY --from=frontend-build /build/dist /app/frontend/dist
+# ===== Stage 4: runtime image =====
+FROM python-base AS runtime
+COPY backend/requirements.txt ./
+RUN pip install -r requirements.txt \
+ && useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin cybershield
+COPY --chown=cybershield:cybershield backend/app ./app
+# main.py resolves the UI at <repo-root>/frontend/dist, i.e. /app/frontend/dist
+COPY --from=frontend-build --chown=cybershield:cybershield /build/dist /app/frontend/dist
 
+USER cybershield
+ENV ENVIRONMENT=production
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/system/health', timeout=4).status == 200 else 1)"
 
-# Run the FastAPI app, serving both the API (/api/v1) and the SPA (root)
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Behind a TLS-terminating proxy (Render, nginx, a load balancer), trust its forwarded headers.
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

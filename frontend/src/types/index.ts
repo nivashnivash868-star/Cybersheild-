@@ -226,15 +226,42 @@ export interface UserSession {
   role: UserRole;
   department: string;
   is_active: boolean;
-  access_token: string;
+  mfa_enabled: boolean;
 }
 
-export interface DemoAccount {
-  role: UserRole;
-  email: string;
-  password: string;
+/** `ok` = fully signed in; `verify` = enter a TOTP code; `enroll` = this role must set up MFA first. */
+export interface SessionState {
+  user: UserSession;
+  mfa_state: 'ok' | 'verify' | 'enroll';
+  must_change_password: boolean;
+}
+
+export interface BlocklistEntry {
+  id: number;
+  indicator_type: 'ip' | 'cidr' | 'domain' | 'url';
+  value: string;
+  reason: string;
+  incident_id: string | null;
+  status: 'PENDING_APPROVAL' | 'ACTIVE' | 'EXPIRED' | 'REVOKED' | 'REJECTED';
+  ttl_hours: number;
+  proposed_by: string;
+  proposed_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  activated_at: string | null;
+  expires_at: string | null;
+}
+
+export interface FeedTokenInfo {
+  id: number;
   name: string;
-  description: string;
+  created_by: string;
+  created_at: string;
+  revoked_at: string | null;
+  last_fetched_at: string | null;
+  last_fetched_version: string | null;
+  last_fetched_ip: string | null;
 }
 
 // Employee Management Types

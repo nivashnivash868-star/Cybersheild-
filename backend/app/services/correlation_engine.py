@@ -1,3 +1,4 @@
+import uuid
 import collections
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Tuple
@@ -124,8 +125,8 @@ class IncidentCorrelationEngine:
         else:
             confidence = "Moderate Confidence (Single-Sensor Repetitive Signature Pattern)"
 
-        timestamp_str = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        inc_id = f"INC-{timestamp_str[-6:]}"
+        timestamp_str = uuid.uuid4().hex[:10].upper()
+        inc_id = f"INC-{datetime.now(timezone.utc).year}-{timestamp_str}"
 
         title = f"Multi-Stage Incident: {', '.join(categories)} targeting {pivot_value}"
         description = (

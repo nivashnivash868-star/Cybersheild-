@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -45,7 +46,7 @@ def analyze_phishing_submission(request: PhishingAnalysisRequest, db: Session = 
     # If evaluated as Medium, High, or Critical, generate SecurityEvent in SOC stream
     if result.risk_score >= 35:
         event_obj = SecurityEvent(
-            event_id=f"SEC-PHISH-{int(datetime.now(timezone.utc).timestamp()) % 100000}",
+            event_id=f"SEC-PHISH-{uuid.uuid4().hex[:12].upper()}",
             timestamp=datetime.now(timezone.utc),
             event_source=f"User Submission / {sub_type.upper()} Analyzer",
             threat_category=f"Phishing / {result.risk_category} Risk",

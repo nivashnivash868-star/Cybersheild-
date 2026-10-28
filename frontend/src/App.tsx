@@ -20,8 +20,9 @@ import { FileAnalysisPage } from './pages/FileAnalysisPage';
 import { NetworkAnomalyPage } from './pages/NetworkAnomalyPage';
 import { SystemStatusPage } from './pages/SystemStatusPage';
 import { ProfileSettingsModal } from './components/profile/ProfileSettingsModal';
-import { api, setAuthToken } from './api/client';
-import { DashboardMetrics, UserSession } from './types';
+import { api, UNAUTHORIZED_EVENT } from './api/client';
+import { BlocklistPage } from './pages/BlocklistPage';
+import { DashboardMetrics, SessionState, UserSession } from './types';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
@@ -32,29 +33,32 @@ export function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
-  // Check stored auth session on startup
+  // A session that exists but still owes MFA or a password change; shown on the sign-in screen.
+  const [pendingSession, setPendingSession] = useState<SessionState | null>(null);
+
+  const landingTab = (user: UserSession): NavTab => (user.role === 'Employee' ? 'employee_dashboard' : 'overview');
+
+  const applySession = (state: SessionState | null) => {
+    if (state && state.mfa_state === 'ok' && !state.must_change_password) {
+      setPendingSession(null);
+      setCurrentUser(state.user);
+      setCurrentTab(landingTab(state.user));
+    } else {
+      setCurrentUser(null);
+      setPendingSession(state);
+    }
+  };
+
+  // The session lives in an HttpOnly cookie; ask the server whether we still have one.
   useEffect(() => {
-    const checkSession = async () => {
-      const token = localStorage.getItem('cybershield_token');
-      if (token) {
-        setAuthToken(token);
-        try {
-          const user = await api.getMe();
-          setCurrentUser(user);
-          if (user.role === 'Employee') {
-            setCurrentTab('employee_dashboard');
-          } else {
-            setCurrentTab('overview');
-          }
-        } catch (err) {
-          console.warn('Session expired or invalid, requiring login:', err);
-          setAuthToken(null);
-          setCurrentUser(null);
-        }
-      }
-      setAuthChecking(false);
-    };
-    checkSession();
+    api.getMe().then(applySession).catch(() => applySession(null)).finally(() => setAuthChecking(false));
+  }, []);
+
+  // Any 401 elsewhere in the app means the session ended: return to sign-in.
+  useEffect(() => {
+    const onUnauthorized = () => { setCurrentUser(null); setPendingSession(null); };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
   const fetchGlobalMetrics = async () => {
@@ -75,12 +79,9 @@ export function App() {
   }, [currentUser]);
 
   const handleLoginSuccess = (user: UserSession) => {
+    setPendingSession(null);
     setCurrentUser(user);
-    if (user.role === 'Employee') {
-      setCurrentTab('employee_dashboard');
-    } else {
-      setCurrentTab('overview');
-    }
+    setCurrentTab(landingTab(user));
   };
 
   const handleLogout = async () => {
@@ -89,8 +90,8 @@ export function App() {
     } catch (err) {
       console.warn('Logout API warning:', err);
     } finally {
-      setAuthToken(null);
       setCurrentUser(null);
+      setPendingSession(null);
       setCurrentTab('overview');
     }
   };
@@ -141,7 +142,7 @@ export function App() {
 
   // If user is not authenticated, render LoginPage (Screen 1)
   if (!currentUser) {
-    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+    return <LoginPage resume={pendingSession} onLoginSuccess={handleLoginSuccess} />;
   }
 
   return (
@@ -250,6 +251,9 @@ export function App() {
             {currentTab === 'forensics' && (
               <ForensicsPage initialIncidentId={selectedIncidentId} />
             )}
+
+            {/* Blocklist: proposals, approvals and firewall feeds */}
+            {currentTab === 'blocklist' && <BlocklistPage currentUser={currentUser} />}
 
             {/* System Status Diagnostic Page */}
             {currentTab === 'system' && <SystemStatusPage />}

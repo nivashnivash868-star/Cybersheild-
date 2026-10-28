@@ -91,7 +91,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
       setPasswordErrorMsg('Please enter a new password.');
       return;
     }
-    if (newPassword.length < 8) {
+    if (!currentPassword || newPassword.length < 12) {
       setPasswordErrorMsg('Password must be at least 8 characters long.');
       return;
     }
@@ -106,7 +106,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
 
     try {
       const res = await api.changePassword({
-        current_password: currentPassword || undefined,
+        current_password: currentPassword,
         new_password: newPassword,
       });
       setPasswordSuccessMsg(res.message || 'Password changed successfully.');

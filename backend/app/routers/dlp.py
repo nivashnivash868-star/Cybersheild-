@@ -3,7 +3,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import SecretFinding, SecurityEvent, AuditLog
+from app.models import SecretFinding, SecurityEvent, AuditLog, User
+from app.utils.auth import require_authenticated_user
 from app.schemas import DLPScanRequest, SecretFindingResponse
 from app.services.dlp_engine import dlp_engine
 from app.services.alert_engine import alert_engine
@@ -114,7 +115,8 @@ def list_secret_findings(
 def update_secret_finding_status(
     finding_id: str,
     status_val: str = Body(..., embed=True),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(require_authenticated_user),
 ):
     valid_statuses = ["NEW", "REVOKED", "CONTAINED", "FALSE_POSITIVE"]
     if status_val not in valid_statuses:
@@ -129,7 +131,7 @@ def update_secret_finding_status(
 
     audit = AuditLog(
         action="DLP_STATUS_CHANGED",
-        actor="Security Administrator",
+        actor=user.email,
         resource_type="SecretFinding",
         resource_id=finding_id,
         details=f"DLP finding status updated from {old_status} to {status_val}."
