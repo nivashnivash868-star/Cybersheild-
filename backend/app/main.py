@@ -19,7 +19,7 @@ from app.worker import run_forever
 from app.routers import (
     dashboard, phishing, file_analysis, network,
     incidents, forensics, events, system,
-    auth, employees, monitoring, dlp, url_warning, alerts, users, blocklist, feeds, zetaris, soc, admin
+    auth, employees, monitoring, dlp, url_warning, alerts, users, blocklist, feeds, zetaris, soc, admin, response, sso, threat_intel
 )
 
 # Configure logging
@@ -122,8 +122,10 @@ _STAFF = [Depends(require_roles(STAFF_ROLES))]
 _ANY_USER = [Depends(require_roles(ALL_ROLES))]
 api_routers = [
     (auth.router, []),                       # public routes + per-route session checks
+    (sso.router, []),                        # OIDC redirects (public by nature; state/nonce/PKCE protected)
     (system.router, []),                     # /health public; the rest per route
     (feeds.router, []),                      # feed-token auth
+    (response.router, []),                   # signed callback (HMAC) + administrators' job list
     (users.router, []),                      # Super Admin per route
     (blocklist.router, []),                  # per route
     (zetaris.router, []),                    # per route
@@ -133,7 +135,7 @@ api_routers = [
     (monitoring.router, _STAFF), (dlp.router, _STAFF), (alerts.router, _STAFF), (dashboard.router, _STAFF),
     (file_analysis.router, _STAFF), (network.router, _STAFF), (incidents.router, _STAFF),
     (forensics.router, _STAFF), (events.router, _STAFF),
-    (phishing.router, _ANY_USER), (url_warning.router, _ANY_USER),
+    (phishing.router, _ANY_USER), (url_warning.router, _ANY_USER), (threat_intel.router, []),
 ]
 
 for router, deps in api_routers:

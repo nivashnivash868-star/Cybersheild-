@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Download, RefreshCw, Search } from 'lucide-react';
 import { api } from '../../api/client';
 import { SecurityEvent } from '../../types';
 import { SimulatedBadge } from '../common/Simulated';
 import { EventInvestigation } from '../investigation/EventInvestigation';
+import { useLoad } from '../../hooks/useLoad';
 
 interface Props {
   title: string;
@@ -40,10 +41,12 @@ export const EventTable: React.FC<Props> = ({ title, subtitle, include, emptyTex
   const [severity, setSeverity] = useState('All');
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState<string | null>(null);
+  const [now, setNow] = useState(0);            // when the events were fetched; keeps the time-range filter pure
 
   const load = useCallback(async () => {
     try {
       setEvents(await api.getEvents({ limit: 200 }));
+      setNow(Date.now());
       setError(null);
     } catch (e: any) {
       setError(e.message);
@@ -51,15 +54,15 @@ export const EventTable: React.FC<Props> = ({ title, subtitle, include, emptyTex
       setLoaded(true);
     }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useLoad(load, [load]);
 
   const rows = useMemo(() => {
     const hours = RANGES[range][1];
-    const since = hours ? Date.now() - hours * 3600_000 : 0;
+    const since = hours ? now - hours * 3600_000 : 0;
     const q = search.trim().toLowerCase();
     return events.filter((e) => include(e) && parseUtc(e.timestamp).getTime() >= since && (severity === 'All' || e.severity === severity)
       && (!q || [e.threat_category, e.user_account, e.source_ip, e.dest_ip, e.domain, e.event_source, e.evidence].some((v) => (v ?? '').toLowerCase().includes(q))));
-  }, [events, include, range, severity, search]);
+  }, [events, include, range, severity, search, now]);
 
   const exportCsv = () => {
     const head = ['time_utc', 'severity', 'risk_score', 'category', 'source', 'user', 'source_ip', 'dest_ip', 'domain', 'triage', 'simulated', 'event_id'];

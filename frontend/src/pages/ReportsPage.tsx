@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Download, RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 import { DashboardMetrics, IncidentDetail, SecurityEvent, SocOverview } from '../types';
 import { SimulatedBanner } from '../components/common/Simulated';
+import { useLoad } from '../hooks/useLoad';
 
 const card = 'bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5';
 
@@ -10,6 +11,19 @@ const count = <T,>(rows: T[], key: (r: T) => string) =>
   Object.entries(rows.reduce<Record<string, number>>((acc, r) => { const k = key(r) || 'Unknown'; acc[k] = (acc[k] ?? 0) + 1; return acc; }, {})).sort((a, b) => b[1] - a[1]);
 
 /** Reports computed from stored data. The downloadable summary contains the same numbers shown here and nothing else. */
+const Bars: React.FC<{ rows: [string, number][]; tone: string; loaded: boolean }> = ({ rows, tone, loaded }) => {
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+return (
+<ul className="space-y-2">
+  {rows.length === 0 && <li className="text-xs text-slate-500">{loaded ? 'No data yet.' : 'Loading…'}</li>}
+  {rows.map(([k, v]) => (
+    <li key={k} className="text-xs"><div className="flex justify-between text-slate-700 dark:text-slate-300"><span className="truncate pr-2">{k}</span><b>{v}</b></div>
+      <div className="h-1.5 rounded bg-slate-100 dark:bg-slate-800 mt-1"><div className={`h-1.5 rounded ${tone}`} style={{ width: `${(v / max) * 100}%` }} /></div></li>
+  ))}
+</ul>
+);
+};
+
 export const ReportsPage: React.FC = () => {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [soc, setSoc] = useState<SocOverview | null>(null);
@@ -28,7 +42,7 @@ export const ReportsPage: React.FC = () => {
       setLoaded(true);
     }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useLoad(load, [load]);
 
   const bySeverity = count(events, (e) => e.severity);
   const byCategory = count(events, (e) => e.threat_category).slice(0, 8);
@@ -57,18 +71,6 @@ export const ReportsPage: React.FC = () => {
     a.href = url; a.download = `cybershield-summary-${new Date().toISOString().slice(0, 10)}.md`; a.click(); URL.revokeObjectURL(url);
   };
 
-  const Bars: React.FC<{ rows: [string, number][]; tone: string }> = ({ rows, tone }) => {
-    const max = Math.max(1, ...rows.map((r) => r[1]));
-    return (
-      <ul className="space-y-2">
-        {rows.length === 0 && <li className="text-xs text-slate-500">{loaded ? 'No data yet.' : 'Loading…'}</li>}
-        {rows.map(([k, v]) => (
-          <li key={k} className="text-xs"><div className="flex justify-between text-slate-700 dark:text-slate-300"><span className="truncate pr-2">{k}</span><b>{v}</b></div>
-            <div className="h-1.5 rounded bg-slate-100 dark:bg-slate-800 mt-1"><div className={`h-1.5 rounded ${tone}`} style={{ width: `${(v / max) * 100}%` }} /></div></li>
-        ))}
-      </ul>
-    );
-  };
 
   return (
     <div className="space-y-6">
@@ -92,10 +94,10 @@ export const ReportsPage: React.FC = () => {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Events by severity</h2><Bars rows={bySeverity} tone="bg-red-500" /></section>
-        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Top detections</h2><Bars rows={byCategory} tone="bg-violet-500" /></section>
-        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Incidents by status</h2><Bars rows={byStatus} tone="bg-sky-500" /></section>
-        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Where events come from</h2><Bars rows={bySource} tone="bg-emerald-500" /></section>
+        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Events by severity</h2><Bars rows={bySeverity} tone="bg-red-500" loaded={loaded} /></section>
+        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Top detections</h2><Bars rows={byCategory} tone="bg-violet-500" loaded={loaded} /></section>
+        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Incidents by status</h2><Bars rows={byStatus} tone="bg-sky-500" loaded={loaded} /></section>
+        <section className={card + ' space-y-3'}><h2 className="text-sm font-bold text-slate-900 dark:text-white">Where events come from</h2><Bars rows={bySource} tone="bg-emerald-500" loaded={loaded} /></section>
       </div>
       <p className="text-[11px] text-slate-500">Charts use the most recent {events.length} events and {incidents.length} incidents.</p>
     </div>

@@ -1,5 +1,10 @@
 # CYBERSHIELD AI: Honest Audit
 
+> **Historical document.** This audit describes the code at commit `f3d60fb`. Almost everything in it has since been fixed or
+> removed; the README says what is true now, [docs/detection-evaluation.md](docs/detection-evaluation.md) says how well the
+> detectors work, and the "Verification status" section of the README lists what is still unproven. It is kept so the reasoning
+> behind the changes stays visible.
+
 Audited 2026-10-28 at commit `f3d60fb`. I read every backend file and every frontend page that holds data or logic. I installed the backend in a scratch venv outside the repo and ran the test suite plus about 30 behavioural probes against the live app. The frontend was **not built or run** (no `node_modules`), so UI claims come from reading source.
 
 ## Verdict

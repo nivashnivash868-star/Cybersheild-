@@ -1,38 +1,33 @@
+import { SimulatedBadge } from '../components/common/Simulated';
 import React, { useState } from 'react';
 import {
-  AlertTriangle, ShieldAlert, ShieldCheck, ArrowLeft,
-  CheckCircle2, Lock, Globe, Server, FileText, Ban
+  AlertTriangle
 } from 'lucide-react';
 import { api } from '../api/client';
-import { useTheme } from '../context/ThemeContext';
-import { URLInspectionResult, Severity } from '../types';
+import { URLInspectionResult } from '../types';
 
 interface URLWarningModalProps {
   inspectionResult?: URLInspectionResult | null;
-  onClose?: () => void;
   onSafeReturn?: () => void;
   employeeEmail?: string;
 }
 
 export const URLWarningModal: React.FC<URLWarningModalProps> = ({
   inspectionResult: initialResult,
-  onClose,
   onSafeReturn,
-  employeeEmail = 'rahul.k@company.com',
+  employeeEmail = '',
 }) => {
-  const { theme } = useTheme();
-  const [testUrl, setTestUrl] = useState('https://malicious-site.com');
   const [showOverrideInput, setShowOverrideInput] = useState(false);
   const [overrideReason, setOverrideReason] = useState('');
   const [overrideLoggedMsg, setOverrideLoggedMsg] = useState<string | null>(null);
 
   // Default displayed warning matching Screen 7
-  const [warningData, setWarningData] = useState({
+  const warningData = {
     url: initialResult?.target_url || 'https://malicious-site.com',
     threatType: initialResult?.threat_category || 'Phishing',
     riskLevel: initialResult?.severity || 'High',
     reason: initialResult?.blocking_reason || 'Known phishing website',
-  });
+  };
 
   const handleSafeReturn = () => {
     if (onSafeReturn) {
@@ -54,13 +49,17 @@ export const URLWarningModal: React.FC<URLWarningModalProps> = ({
       setOverrideLoggedMsg('Security access request logged in SOC audit trail. Exception under review.');
       setShowOverrideInput(false);
     } catch (err: any) {
-      setOverrideLoggedMsg('Security access request logged in SOC audit trail. Exception under review.');
-      setShowOverrideInput(false);
+      setOverrideLoggedMsg(`The request could not be logged, so no exception was recorded: ${err.message}`);
     }
   };
 
   return (
     <div className="min-h-[85vh] flex flex-col justify-center items-center p-4 sm:p-6 font-sans">
+      {!initialResult && (
+        <p className="mb-3 text-[11px] text-slate-500 dark:text-slate-400">
+          <SimulatedBadge className="mr-1.5" /> This is a sample of the page an employee sees when the gateway blocks a site; no real site was checked.
+        </p>
+      )}
       <div className="w-full max-w-xl mx-auto bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl p-8 text-center transition-colors">
         {/* Large Red Warning Triangle Icon matching Screen 7 */}
         <div className="w-20 h-20 rounded-full bg-red-100 dark:bg-red-950/60 flex items-center justify-center mx-auto mb-5 text-red-600 dark:text-red-400">

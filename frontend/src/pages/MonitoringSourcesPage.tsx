@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Activity, ShieldCheck, Server, AlertTriangle, RefreshCw,
-  Radio, CheckCircle2, Wifi, Zap, Clock, Terminal, Globe,
-  ShieldAlert, Mail, Laptop, HardDrive, KeyRound, Cloud
+  Radio, CheckCircle2, Zap, Clock, Globe,
+  Mail, Laptop, KeyRound, Cloud
 } from 'lucide-react';
 import { api } from '../api/client';
 import { MonitoringSource, SecurityEvent } from '../types';
+import { useLoad } from '../hooks/useLoad';
 
 export const MonitoringSourcesPage: React.FC = () => {
   const [sources, setSources] = useState<MonitoringSource[]>([]);
@@ -19,7 +20,7 @@ export const MonitoringSourcesPage: React.FC = () => {
     try {
       const data = await api.getMonitoringSources();
       setSources(data);
-      setLastCheckTime(new Date().toTimeString().split(' ')[0] + ' UTC');
+      setLastCheckTime(new Date().toISOString().slice(11, 19) + ' UTC');
     } catch (err) {
       console.error('Failed to load monitoring sources:', err);
     } finally {
@@ -27,11 +28,7 @@ export const MonitoringSourcesPage: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    loadSources();
-    const interval = setInterval(loadSources, 20000);
-    return () => clearInterval(interval);
-  }, []);
+  useLoad(loadSources, [], { every: 20000 });
 
   const handleSimulatePulse = async () => {
     setPulsing(true);

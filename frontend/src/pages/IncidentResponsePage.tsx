@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Search, RefreshCw, FileDown, Send, Eye, Check, Bot } from 'lucide-react';
 import { api } from '../api/client';
 import { Assignable, DecisionRequest, IncidentDetail, UserSession } from '../types';
 import { SimulatedBadge } from '../components/common/Simulated';
 import { EventInvestigation } from '../components/investigation/EventInvestigation';
+import { useLoad } from '../hooks/useLoad';
 
 interface Props {
   currentUser: UserSession;
@@ -60,7 +61,7 @@ export const IncidentResponsePage: React.FC<Props> = ({ currentUser, selectedInc
     }
   }, [search, selectedIncidentId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useLoad(load, [load]);
 
   const visible = useMemo(() => incidents.filter((i) => filter === 'all' || !['Resolved', 'False Positive'].includes(i.status)), [incidents, filter]);
   const inc = incidents.find((i) => i.incident_id === activeId) ?? null;

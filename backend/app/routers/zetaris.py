@@ -67,6 +67,21 @@ def run_ingest_now(db: Session = Depends(get_db), user: User = Depends(require_r
         raise HTTPException(status_code=502, detail=str(exc))
 
 
+@router.get("/preview")
+def preview_source(source: str = Query(..., pattern="^(auth|network|email)$"), db: Session = Depends(get_db),
+                   user: User = Depends(require_roles(ADMIN_ROLES))):
+    """Check a configured table before relying on it: a few newest rows, whether timestamps and outcome values are
+    understood, and warnings. Writes nothing."""
+    _throttle(user)
+    try:
+        with _client() as c:
+            return zetaris_ingest.preview(c, source)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ZetarisError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 @router.get("/investigate")
 def investigate(indicator: str = Query(..., min_length=2, max_length=128), user: User = Depends(require_roles(STAFF_ROLES))):
     _throttle(user)

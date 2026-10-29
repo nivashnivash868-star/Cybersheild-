@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { RefreshCw, ShieldAlert, Users, AlertTriangle, ClipboardCheck, Activity, UserPlus, SlidersHorizontal, ScrollText } from 'lucide-react';
 import { api } from '../api/client';
 import { AdminOverview } from '../types';
 import { SimulatedBanner } from '../components/common/Simulated';
+import { useLoad } from '../hooks/useLoad';
 
 interface Props {
   onNavigateToTab: (tab: any) => void;
@@ -26,11 +27,7 @@ export const AdminDashboardPage: React.FC<Props> = ({ onNavigateToTab }) => {
   const load = useCallback(async () => {
     try { setO(await api.getAdminOverview()); setError(null); } catch (e: any) { setError(e.message); }
   }, []);
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), 15000);
-    return () => clearInterval(id);
-  }, [load]);
+  useLoad(load, [load], { every: 15000 });
 
   const attention: { text: string; tab: string; tone: string }[] = [];
   if (o) {

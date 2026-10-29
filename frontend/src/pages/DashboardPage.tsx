@@ -1,13 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Users, ShieldAlert, AlertTriangle, Globe, KeyRound, Activity, ExternalLink, RefreshCw } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
 import { api } from '../api/client';
-import { useTheme } from '../context/ThemeContext';
+import { useTheme } from '../context/themeContext';
 import { ActivityDataPoint, CategoryCount, DashboardMetrics, SecurityEvent, Severity } from '../types';
 import { SimulatedBadge, SimulatedBanner } from '../components/common/Simulated';
 import { EventInvestigation } from '../components/investigation/EventInvestigation';
+import { useLoad } from '../hooks/useLoad';
 
 interface Props {
   onNavigateToTab: (tab: any) => void;
@@ -80,11 +81,7 @@ export const DashboardPage: React.FC<Props> = ({ onNavigateToTab, onSelectIncide
     }
   }, []);
 
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), REFRESH_MS);
-    return () => clearInterval(id);
-  }, [load]);
+  useLoad(load, [load], { every: REFRESH_MS });
 
   const delta = (() => {
     if (!metrics) return undefined;

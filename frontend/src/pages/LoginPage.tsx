@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { api } from '../api/client';
-import { useTheme } from '../context/ThemeContext';
+import { useTheme } from '../context/themeContext';
 import { SessionState, UserSession } from '../types';
 
 interface LoginPageProps {
@@ -36,6 +36,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ resume, onLoginSuccess }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [sso, setSso] = useState<{ enabled: boolean; provider_name: string } | null>(null);
+  const ssoRefused = params.get('sso_error') === 'denied';
 
   const enterStage = async (state: SessionState) => {
     setError(null);
@@ -53,6 +55,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ resume, onLoginSuccess }) 
     if (state.must_change_password) return setStage('change_password');
     onLoginSuccess(state.user);
   };
+
+  useEffect(() => {
+    api.ssoConfig().then(setSso).catch(() => setSso(null));
+    if (ssoRefused) {
+      window.history.replaceState({}, '', window.location.pathname);
+      setError('Single sign-on was refused. Your account may not exist here or may be disabled; ask your security administrator.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (resume) void enterStage(resume);
@@ -256,6 +267,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ resume, onLoginSuccess }) 
                   </div>
                 </div>
                 {submit('Sign In')}
+                {sso?.enabled && (
+                  <>
+                    <div className="flex items-center gap-3 text-[11px] text-slate-400"><span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />or<span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" /></div>
+                    <a href={api.ssoLoginUrl()}
+                      className="w-full py-2.5 px-4 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-xs transition flex items-center justify-center gap-2">
+                      <Lock className="w-4 h-4" /> Continue with {sso.provider_name}
+                    </a>
+                  </>
+                )}
                 <p className="text-center text-xs text-slate-500 dark:text-slate-400 pt-2">
                   Need access? Ask your security administrator to create your account.
                 </p>

@@ -3,6 +3,8 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from app.services import threat_intel
+from app.services.platform_status import platform_status
 from app.database import get_db, get_db_status
 from app.models import SecurityEvent, Incident, ThreatAnalysis, SecretFinding, Employee, AuditLog, IngestState
 from app.schemas import DashboardMetrics, ThreatSeverityDistribution, ActivityDataPoint, SecurityEventResponse, CategoryCount
@@ -55,10 +57,9 @@ def get_dashboard_metrics(db: Session = Depends(get_db)):
         secret_leaks_total=secret_leaks,
         active_employees_monitored=active_employees,
         open_investigations=open_investigations,
-        system_status="Operational",
+        system_status=platform_status(db),
         db_mode=get_db_status()["provider"],
-        # No reputation client exists: a configured key must never read as a live connection.
-        reputation_service_status="Not connected: no external reputation lookups are made",
+        reputation_service_status="; ".join(f"{p['name']}: {p['state'].replace('_', ' ')}" for p in threat_intel.provider_status(db)),
         ml_models_active=True,
         events_last_24h=last_24,
         events_prev_24h=prev_24,

@@ -38,31 +38,57 @@ def _maybe_ingest(db) -> int:
         return 0
 
 
-def run_once() -> dict:
+def deliver_once() -> dict:
+    """The fast, time-sensitive half: alerts, blocklist expiry and response-connector jobs. Never waits on Zetaris."""
     with SessionLocal() as db:
         stats = process_outbox(db)
         stats["expired_blocks"] = expire_due(db)
-        stats["zetaris_events"] = _maybe_ingest(db)
-    with SessionLocal() as db:
-        from app.services import soc_automation
-        stats["soc"] = soc_automation.run_cycle(db)  # L1 triage, then L2 investigation; L3 stays with people
+        from app.services import response_executor
+        for key, n in response_executor.process_due(db).items():
+            stats[f"response_{key}"] = n
         from app.services import settings_store
         settings_store.put_fact(db, "worker_heartbeat", naive_utc_now().isoformat())
         db.commit()
     return stats
 
 
-async def run_forever(interval_seconds: float = 5.0) -> None:
+def analyse_once() -> dict:
+    """The slow half: pull from Zetaris (which can take minutes when it is busy), then L1 triage and L2 investigation."""
+    stats: dict = {}
+    with SessionLocal() as db:
+        stats["zetaris_events"] = _maybe_ingest(db)
+    with SessionLocal() as db:
+        from app.services import soc_automation
+        stats["soc"] = soc_automation.run_cycle(db)  # L1 triage, then L2 investigation; L3 stays with people
+        db.commit()
+    return stats
+
+
+def run_once() -> dict:
+    return {**deliver_once(), **analyse_once()}
+
+
+async def _loop(name: str, fn, interval_seconds: float) -> None:
     while True:
         try:
-            stats = await asyncio.to_thread(run_once)
+            stats = await asyncio.to_thread(fn)
             if any(stats.values()):
-                logger.info("worker pass: %s", stats)
+                logger.info("worker %s pass: %s", name, stats)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("worker pass failed")
+            logger.exception("worker %s pass failed", name)
         await asyncio.sleep(interval_seconds)
+
+
+async def run_forever(interval_seconds: float = 5.0) -> None:
+    """Delivery and analysis run as separate loops, so a slow data source never delays an alert or an approved response.
+    SQLite (development only) allows one writer at a time, so there they take turns in a single loop."""
+    from app.database import engine
+    if engine.dialect.name == "sqlite":
+        await _loop("combined", run_once, interval_seconds)
+    else:
+        await asyncio.gather(_loop("delivery", deliver_once, interval_seconds), _loop("analysis", analyse_once, interval_seconds))
 
 
 if __name__ == "__main__":

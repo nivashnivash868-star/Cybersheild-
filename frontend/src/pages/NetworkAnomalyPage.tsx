@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Network, Activity, AlertOctagon, CheckCircle2, ShieldCheck,
-  Send, Sparkles, Server, Terminal, Filter, ShieldAlert
+  Network, CheckCircle2, Send, Sparkles, Terminal
 } from 'lucide-react';
 import { api } from '../api/client';
 import { NetworkAnalysisBatchResult } from '../types';
@@ -11,6 +10,7 @@ export const NetworkAnomalyPage: React.FC = () => {
   const [scenarios, setScenarios] = useState<any[]>([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>('brute_force_ssh');
   const [rawRecordsJson, setRawRecordsJson] = useState<string>('');
+  const [sampleJson, setSampleJson] = useState<string>('');   // the built-in sample last loaded; used to mark its events SIMULATED
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<NetworkAnalysisBatchResult | null>(null);
@@ -21,6 +21,7 @@ export const NetworkAnomalyPage: React.FC = () => {
       if (data.length > 0) {
         setSelectedScenarioId(data[0].id);
         setRawRecordsJson(JSON.stringify(data[0].records, null, 2));
+        setSampleJson(JSON.stringify(data[0].records, null, 2));
       }
     }).catch(console.error);
   }, []);
@@ -30,6 +31,7 @@ export const NetworkAnomalyPage: React.FC = () => {
     const scen = scenarios.find((s) => s.id === id);
     if (scen) {
       setRawRecordsJson(JSON.stringify(scen.records, null, 2));
+      setSampleJson(JSON.stringify(scen.records, null, 2));
       setError(null);
     }
   };
@@ -49,7 +51,7 @@ export const NetworkAnomalyPage: React.FC = () => {
 
     setLoading(true);
     try {
-      const res = await api.analyzeNetworkBatch(parsedRecords);
+      const res = await api.analyzeNetworkBatch(parsedRecords, rawRecordsJson === sampleJson);
       setResult(res);
     } catch (err: any) {
       setError(err.message || 'Network anomaly detection failed.');

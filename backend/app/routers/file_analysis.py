@@ -5,14 +5,17 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import ThreatAnalysis, SecurityEvent, AuditLog
+from app.models import ThreatAnalysis, SecurityEvent, AuditLog, User
+from app.utils.auth import require_authenticated_user
 from app.schemas import FileAnalysisResponse
 from app.services.file_analyzer import file_analyzer, MAX_FILE_SIZE
+from app.services.enrichment import enrich_file
 
 router = APIRouter(prefix="/files", tags=["Suspicious File Analysis"])
 
 @router.post("/analyze", response_model=FileAnalysisResponse)
-async def analyze_uploaded_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def analyze_uploaded_file(file: UploadFile = File(...), db: Session = Depends(get_db),
+                                user: User = Depends(require_authenticated_user)):
     try:
         content = await file.read()
     except Exception as e:
@@ -22,7 +25,7 @@ async def analyze_uploaded_file(file: UploadFile = File(...), db: Session = Depe
         raise HTTPException(status_code=413, detail=f"File exceeds maximum size threshold ({MAX_FILE_SIZE // (1024*1024)}MB).")
 
     try:
-        result = file_analyzer.analyze_file_bytes(filename=file.filename or "unknown_upload.bin", content=content)
+        result = enrich_file(db, file_analyzer.analyze_file_bytes(filename=file.filename or "unknown_upload.bin", content=content))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis engine error: {str(e)}")
 
@@ -71,7 +74,7 @@ async def analyze_uploaded_file(file: UploadFile = File(...), db: Session = Depe
 
     audit = AuditLog(
         action="FILE_ANALYZED",
-        actor="SOC Analyst / Portal User",
+        actor=user.email,
         resource_type="ThreatAnalysis",
         resource_id=result.analysis_id,
         details=f"Analyzed static artifact '{result.filename}' (SHA256: {result.sha256[:16]}...). Risk: {result.risk_score} ({result.risk_category})."
@@ -106,7 +109,7 @@ def analyze_sample_file(sample_type: str = Body(..., embed=True), db: Session = 
         raise HTTPException(status_code=400, detail=f"Unknown sample type '{sample_type}'. Allowed: {list(samples.keys())}")
 
     fname, content = samples[sample_type]
-    result = file_analyzer.analyze_file_bytes(filename=fname, content=content)
+    result = enrich_file(db, file_analyzer.analyze_file_bytes(filename=fname, content=content))
 
     threat_record = ThreatAnalysis(
         analysis_id=result.analysis_id,

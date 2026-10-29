@@ -9,6 +9,7 @@ from app.utils.auth import require_authenticated_user
 from app.schemas import URLWarningInspectRequest, URLWarningInspectResponse, URLOverrideLogRequest
 from app.services.phishing_engine import phishing_detector
 from app.services.alert_engine import alert_engine
+from app.services.enrichment import enrich_url
 
 router = APIRouter(prefix="/url", tags=["URL Warning & Gateway Protection"])
 
@@ -18,7 +19,7 @@ def inspect_url_for_warning(payload: URLWarningInspectRequest, db: Session = Dep
     Inspects URL accessed by an employee. If flagged as elevated risk,
     generates an enterprise warning interstitial response and creates a SOC alert.
     """
-    analysis = phishing_detector.analyze_url(payload.url)
+    analysis = enrich_url(db, phishing_detector.analyze_url(payload.url))
     
     parsed = urlparse(payload.url if payload.url.startswith("http") else f"http://{payload.url}")
     domain = parsed.hostname or "unknown-domain"
@@ -69,12 +70,13 @@ def inspect_url_for_warning(payload: URLWarningInspectRequest, db: Session = Dep
     return URLWarningInspectResponse(
         target_url=payload.url,
         domain=domain,
-        threat_category="Phishing / Brand Spoofing" if is_dangerous else "Nominal Web Traffic",
+        threat_category=(f"Suspicious URL: {analysis.indicators[0].signal}" if analysis.indicators else "Suspicious URL") if is_dangerous else "Nominal Web Traffic",
         risk_score=analysis.risk_score,
         severity=analysis.risk_category,
         is_blocked=is_dangerous,
         is_simulated_block=True,
-        blocking_reason="Simulated gateway block: Disposable TLD and credential spoofing patterns detected." if is_dangerous else "Not blocked",
+        blocking_reason=("No gateway is connected, so nothing was actually blocked. Why it was flagged: "
+                         + "; ".join(i.signal for i in analysis.indicators[:3])) if is_dangerous else "Not blocked",
         advisory_message=advisory,
         safe_return_url="about:blank",
         can_proceed_override=True,
@@ -118,4 +120,4 @@ def record_employee_override(payload: URLOverrideLogRequest, db: Session = Depen
     db.add(sec_event)
     db.commit()
 
-    return {"status": "success", "message": "Override logged in SOC audit record. Workstation is being monitored."}
+    return {"status": "success", "message": "Override logged in the SOC audit record and raised as an alert for triage."}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Upload, FileSearch, ShieldAlert, CheckCircle2, Copy, Check,
-  AlertTriangle, FileText, Cpu, Sparkles, Binary, Lock
+  Upload, FileSearch, Copy, Check,
+  Sparkles, Binary, Lock
 } from 'lucide-react';
 import { api } from '../api/client';
 import { FileAnalysisResult } from '../types';

@@ -5,6 +5,8 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.config import settings
+from app.services import threat_intel as ti
+from app.services.platform_status import platform_status
 from app.database import get_db, get_db_status
 from app.models import AuditLog, BlocklistEntry, FeedToken, User
 from app.schemas import SystemStatusResponse
@@ -54,28 +56,25 @@ def get_full_system_status(db: Session = Depends(get_db), _: User = Depends(requ
             "status": ("Configured; see /zetaris/status for a live connection check" if settings.zetaris_configured
                        else "Not configured: no external data sources are being read"),
         },
-        "virustotal_reputation": {
-            "configured": bool(settings.VIRUSTOTAL_API_KEY),
-            "status": "Key present, but no client is implemented: no lookups are made",
-        },
-        "phishtank_feed": {
-            "configured": bool(settings.PHISHTANK_API_KEY),
-            "status": "Key present, but no client is implemented: no lookups are made",
+        "threat_intelligence": {
+            "configured": bool(settings.VIRUSTOTAL_API_KEY or settings.ABUSEIPDB_API_KEY),
+            "status": "; ".join(f"{p['name']}: {p['state']}" for p in ti.provider_status(db)),
         },
     }
     ml_engine = {
-        "status": "Baseline models",
-        "phishing_text_classifier": "TF-IDF + LogisticRegression trained on a small hand-written sample; not evaluated",
-        "network_anomaly_detector": "IsolationForest on a small fixed sample plus thresholds; not evaluated",
-        "file_scanner": "Static heuristics, Shannon entropy and a small signature list",
+        "status": "Evaluated, with stated limits (docs/detection-evaluation.md)",
+        "phishing_url_model": "Character n-gram model on an OpenPhish snapshot vs. Tranco sites, plus brand/host rules; ~64% of held-out phishing High+, ~0.3% false alerts on unfamiliar legitimate sites",
+        "phishing_text_classifier": "Rules + link analysis + a 60-message word model; evaluated on our own message sets, not a real mailbox",
+        "network_anomaly_detector": "Rules plus an IsolationForest fitted on a generated baseline unless NETWORK_BASELINE_CSV supplies your traffic",
+        "file_scanner": "Static analysis (format, entropy, byte patterns); built-in signatures are the EICAR test file only unless FILE_HASH_FEED_PATH is set",
     }
     security_guards = {
         "authentication": "Server-side sessions (HttpOnly cookie), Argon2id, TOTP MFA, CSRF token, lockout and rate limits",
         "audit_trail": "Append-only HMAC hash chain; verify at /system/audit/verify",
-        "ssrf_guard": "Hostname/IP checks on submitted URLs; the app never fetches them",
+        "url_handling": "Submitted URLs are analysed as text only: never fetched, never resolved",
     }
     return SystemStatusResponse(
-        name=settings.PROJECT_NAME, version="2.0.0", environment=settings.ENVIRONMENT, status="Operational",
+        name=settings.PROJECT_NAME, version="2.0.0", environment=settings.ENVIRONMENT, status=platform_status(db),
         database=get_db_status(), integrations=integrations, ml_engine=ml_engine, security_guards=security_guards,
     )
 

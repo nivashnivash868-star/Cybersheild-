@@ -4,22 +4,15 @@ from app.schemas import NetworkRecordInput
 
 def test_ssh_brute_force_detection():
     records = [
-        NetworkRecordInput(source_ip="194.26.29.112", destination_ip="172.16.50.4", destination_port=22, auth_status="FAILED", user_account="root"),
-        NetworkRecordInput(source_ip="194.26.29.112", destination_ip="172.16.50.4", destination_port=22, auth_status="FAILED", user_account="admin"),
-        NetworkRecordInput(source_ip="194.26.29.112", destination_ip="172.16.50.4", destination_port=22, auth_status="FAILED", user_account="deploy")
+        NetworkRecordInput(source_ip="194.26.29.112", destination_ip="172.16.50.4", destination_port=22, auth_status="FAILED", user_account=u)
+        for u in ("root", "admin", "deploy", "ubuntu", "test", "oracle")
     ]
     result = network_detector.analyze_batch(records)
     assert result.anomalies_detected >= 1
     assert any("Brute-Force" in a.event_type for a in result.alerts)
 
 def test_port_scan_detection():
-    records = [
-        NetworkRecordInput(source_ip="45.143.200.12", destination_ip="172.16.50.8", destination_port=21),
-        NetworkRecordInput(source_ip="45.143.200.12", destination_ip="172.16.50.8", destination_port=22),
-        NetworkRecordInput(source_ip="45.143.200.12", destination_ip="172.16.50.8", destination_port=80),
-        NetworkRecordInput(source_ip="45.143.200.12", destination_ip="172.16.50.8", destination_port=443),
-        NetworkRecordInput(source_ip="45.143.200.12", destination_ip="172.16.50.8", destination_port=3389)
-    ]
+    records = [NetworkRecordInput(source_ip="45.143.200.12", destination_ip="172.16.50.8", destination_port=p) for p in range(20, 35)]
     result = network_detector.analyze_batch(records)
     assert result.anomalies_detected >= 1
     assert any("Port" in a.event_type for a in result.alerts)

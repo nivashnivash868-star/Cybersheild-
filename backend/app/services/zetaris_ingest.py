@@ -131,6 +131,14 @@ def _emit(db: Session, *, event_id: str, source_label: str, category: str, score
 
 
 # --- per-source ingestion ---------------------------------------------------------------------------------------------
+def _outcome_in(column: str, csv_values: str) -> str:
+    """`UPPER(col) IN ('A','B')`: the configured spellings of an outcome, compared without regard to case."""
+    values = [v.strip().upper() for v in csv_values.split(",") if v.strip()]
+    if not values:
+        raise ValueError("No outcome values configured for the auth table.")
+    return f"UPPER({column}) IN ({', '.join(sql_value(v) for v in values)})"
+
+
 def _auth_floor() -> int:
     low = settings.ZETARIS_LOW_SIGNAL_THRESHOLD
     return max(1, min(low, settings.ZETARIS_BRUTE_FORCE_THRESHOLD)) if low > 0 else settings.ZETARIS_BRUTE_FORCE_THRESHOLD
@@ -146,7 +154,7 @@ def _ingest_auth(db: Session, client: ZetarisClient, state: IngestState) -> Dict
     groups = client.query(
         f"SELECT {c['src_ip']} AS src_ip, {c['username']} AS username, COUNT(*) AS failures, "
         f"MIN({c['event_time']}) AS first_seen, MAX({c['event_time']}) AS last_seen FROM {t} "
-        f"WHERE {c['result']} = 'FAILURE' AND {c['event_time']} > {wm} AND {c['event_time']} <= {sql_timestamp(newest_ts)} "
+        f"WHERE {_outcome_in(c['result'], settings.ZETARIS_AUTH_FAILURE_VALUES)} AND {c['event_time']} > {wm} AND {c['event_time']} <= {sql_timestamp(newest_ts)} "
         f"GROUP BY {c['src_ip']}, {c['username']} HAVING COUNT(*) >= {int(_auth_floor())} "
         f"ORDER BY failures DESC",
         max_rows=500,
@@ -175,7 +183,7 @@ def _ingest_auth(db: Session, client: ZetarisClient, state: IngestState) -> Dict
         if not internal:
             try:  # an outside address that failed repeatedly and then got in is a likely compromise
                 hit = client.query(
-                    f"SELECT COUNT(*) AS n FROM {t} WHERE {c['result']} = 'SUCCESS' AND {c['src_ip']} = {sql_value(ip)} "
+                    f"SELECT COUNT(*) AS n FROM {t} WHERE {_outcome_in(c['result'], settings.ZETARIS_AUTH_SUCCESS_VALUES)} AND {c['src_ip']} = {sql_value(ip)} "
                     f"AND {c['username']} = {sql_value(user)} AND {c['event_time']} >= {sql_timestamp(last or newest_ts)}",
                     max_rows=1)
                 compromised = bool(hit and int(hit[0].get("n") or 0) > 0)
@@ -382,3 +390,47 @@ def investigate(client: ZetarisClient, indicator: str, *, limit: int = 200) -> D
             f"{stats.get('flows', 0)} flows, {stats.get('bytes_transferred', 0)} bytes.")})
     return {"indicator": indicator.strip(), "type": kind, "sources_queried": sources_used, "stats": stats,
             "timeline": timeline[-limit:], "suggested_blocks": suggested}
+
+
+# --- previewing a source before trusting it -------------------------------------------------------------------------------
+def preview(client: ZetarisClient, source: str, limit: int = 5) -> Dict[str, Any]:
+    """Read a few of the newest rows of a configured table and say whether CyberShield understands them. Writes nothing.
+    Meant for the first connection to real logs: wrong column names, unreadable timestamps or an unexpected outcome
+    vocabulary are the usual reasons a pipeline silently finds nothing."""
+    if source not in SOURCES or source not in configured_sources():
+        raise ValueError("That source is not configured.")
+    c, t = columns(source), table(source)
+    cols = ", ".join(f"{col} AS {key}" for key, col in c.items())
+    rows = client.query(f"SELECT {cols} FROM {t} ORDER BY {c['event_time']} DESC LIMIT {int(max(1, min(limit, 20)))}", max_rows=20)
+    out: Dict[str, Any] = {"source": source, "table": t, "columns": c, "sample_rows": [], "warnings": []}
+    parsed = 0
+    for r in rows:
+        out["sample_rows"].append({k: (str(v)[:120] if v is not None else None) for k, v in r.items()})
+        parsed += 1 if parse_time(r.get("event_time")) else 0
+    out["timestamps_read"] = f"{parsed}/{len(rows)}"
+    if not rows:
+        out["warnings"].append("The table returned no rows.")
+    elif parsed < len(rows):
+        out["warnings"].append("Some event_time values could not be read; CyberShield expects 'YYYY-MM-DD HH:MM:SS[.f]', ISO 8601 or epoch values.")
+    since = client.query(f"SELECT COUNT(*) AS n FROM {t} WHERE {c['event_time']} > {sql_timestamp(naive_utc_now() - timedelta(hours=24))}", max_rows=1)
+    out["rows_last_24h"] = int((since[0].get("n") if since else 0) or 0)
+    if rows and out["rows_last_24h"] == 0:
+        out["warnings"].append("No rows in the last 24 hours: timestamps may be in another time zone, or the feed has stopped.")
+    if source == "auth":
+        dist = client.query(f"SELECT {c['result']} AS value, COUNT(*) AS n FROM {t} GROUP BY {c['result']} ORDER BY n DESC LIMIT 10", max_rows=10)
+        out["outcome_values"] = [{"value": str(d.get("value")), "count": int(d.get("n") or 0)} for d in dist]
+        fail = {v.strip().upper() for v in settings.ZETARIS_AUTH_FAILURE_VALUES.split(",") if v.strip()}
+        known = fail | {v.strip().upper() for v in settings.ZETARIS_AUTH_SUCCESS_VALUES.split(",") if v.strip()}
+        seen = {str(d.get("value")).upper() for d in dist}
+        out["failure_values_matched"] = sorted(seen & fail)
+        if not seen & fail:
+            out["warnings"].append("None of the outcome values in the table match ZETARIS_AUTH_FAILURE_VALUES, so no failed-login burst will ever be found. "
+                                   "Add the table's spelling of 'failed' to that setting.")
+        unknown = sorted(seen - known)
+        if unknown:
+            out["warnings"].append(f"Outcome values not classified as success or failure: {', '.join(unknown[:6])}.")
+    if source == "network":
+        bad = sum(1 for r in rows if not str(r.get("dst_port", "")).lstrip("-").isdigit() or not str(r.get("bytes", "")).lstrip("-").isdigit())
+        if bad:
+            out["warnings"].append("Some dst_port / bytes values are not whole numbers; those flows are skipped.")
+    return out

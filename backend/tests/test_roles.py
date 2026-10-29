@@ -145,7 +145,7 @@ def test_the_permission_matrix_and_integrations_are_visible_to_administrators(se
     close = next(r for r in matrix if r["capability"] == "Close a Critical incident")
     assert close["SOC Analyst"] == "Request, administrator approves" and close["Security Administrator"] is True
     integ = {i["name"]: i for i in secadmin.get(f"{API}/admin/integrations").json()}
-    assert integ["Identity provider (disable accounts)"]["configured"] is False        # honest about what is not connected
+    assert integ["Response connector (identity provider / EDR)"]["configured"] is False    # honest about what is not connected
 
 
 # --- analyst workflow ---------------------------------------------------------------------------------------------------

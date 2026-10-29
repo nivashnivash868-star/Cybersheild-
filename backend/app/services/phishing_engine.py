@@ -1,265 +1,141 @@
-import uuid
+import json
 import re
-import math
+import uuid
 from datetime import datetime, timezone
-from urllib.parse import urlparse
-from typing import List, Dict, Any, Tuple
+from pathlib import Path
+from typing import List, Tuple
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
+
 from app.schemas import IndicatorDetail, PhishingAnalysisResponse
-from app.utils.ssrf_guard import validate_url_safe_for_inspection
+from app.services import url_features as uf
 
-# Cybersecurity knowledge base of suspicious patterns
-SUSPICIOUS_TLDS = {
-    ".xyz", ".top", ".tk", ".ml", ".ga", ".cf", ".gq", ".buzz", ".work",
-    ".loan", ".club", ".icu", ".cam", ".monster", ".rest", ".fit"
-}
+MESSAGE_TRAINING_PATH = uf.DATA_DIR / "message_training.json"
 
-FINANCIAL_AND_BRAND_KEYWORDS = [
-    "paypal", "microsoft", "google", "apple", "netflix", "chase", "wellsfargo",
-    "bankofamerica", "citibank", "amazon", "dhl", "fedex", "usps", "irs",
-    "binance", "coinbase", "metamask", "office365", "outlook", "sharepoint"
-]
+# Signal groups for message text: (label, severity, points, patterns). Each group scores once.
+PRESSURE = re.compile(r"\b(immediately|urgent(ly)?|asap|right now|act now|final (notice|warning)|action required|"
+                      r"within \d+ ?(hours?|hrs|minutes|days)|expires? (today|tonight|in \d+)|(closes?|ends?|due) tonight|"
+                      r"(account|access|mailbox) (will be )?(suspended|terminated|closed|deleted|restricted|limited|locked|deactivated)|"
+                      r"unauthorized activity|temporary hold|restricted access|can'?t wait|before \d+ ?(pm|am))\b", re.I)
+SECRECY = re.compile(r"(keep (this|it) (strictly )?(confidential|between us|private)|do not (discuss|tell|share)|don'?t (discuss|tell)|"
+                     r"between us|can'?t (talk|call)|cannot (talk|call)|in a (client )?meeting and)", re.I)
+CREDENTIAL = re.compile(r"(verify your (account|identity|password)|confirm your (password|identity|account)|"
+                        r"(enter|re-?enter|send|reply with|provide|share) (us |me )?(your )?(current |email |login |account )?"
+                        r"(password|credentials|username and password|recovery key|otp|one-?time (code|passcode))|"
+                        r"(your |email |corporate |work )password to (view|open|access)|sign[- ]?in (with|using) your|"
+                        r"log ?in with your|login here|reset your password at|re-?authenticate|sign in to (restore|keep|view)|"
+                        r"security question|(two|multi)-?factor settings|confirm it was you)", re.I)
+PAYMENT = re.compile(r"(wire( transfer)?|gift ?cards?|(new|updated|changed) (bank|banking) (account|details)|banking details|"
+                     r"bank details|routing number|direct deposit|bank account (and|number)|card number|iban|bitcoin|crypto(currency)?|"
+                     r"redelivery fee|customs fee|remit(tance)? payment|(send|route|process|pay) (the |all |this )?(transfer|payment|invoice|funds)|"
+                     r"w-?2|tax refund|you are owed a refund)", re.I)
+EXECUTABLE = re.compile(r"(run the attached|open the attached (file|installer)|attached installer|download the attached|enable (macros|content)|"
+                        r"run (it|the (file|installer|update))|install (the )?(attached|update from))", re.I)
+LURE = re.compile(r"(voicemail|qr code|scan (this|the) code|undelivered package|package (could not|cannot) be delivered|"
+                  r"(won|selected for|claim your) (a |an |your )?(prize|reward|voucher|\$)|congratulations|document has been shared|"
+                  r"shared (with you|document)|needs your (microsoft|google|office|account)|mailbox (is )?(almost )?full|"
+                  r"exceeded its (limit|quota)|storage quota|unusual sign-?in|suspicious login|compromised|"
+                  r"are you (available|at your desk)|favou?r that|need (you )?to (buy|purchase))", re.I)
+NEGATION = re.compile(r"(will never ask|never ask for|do not (share|give) your password|if (this )?was (not )?you|no action (is )?needed|"
+                      r"if you did not request)", re.I)
 
-CREDENTIAL_HARVEST_KEYWORDS = [
-    "login", "signin", "verify", "secure", "account", "update", "banking",
-    "authenticate", "password", "credential", "portal", "session", "confirm"
-]
+# Score bands shared by the URL and message paths.
+ALERT_SCORE = 60      # High and above: raise it
+SUSPICIOUS_SCORE = 35
 
-URGENCY_TRIGGERS = [
-    "immediately", "urgent", "account suspended", "24 hours", "action required",
-    "temporary hold", "unauthorized activity", "final notice", "restricted access",
-    "wire transfer", "gift card", "payroll direct deposit", "overdue invoice"
-]
-
-URL_SHORTENERS = {
-    "bit.ly", "tinyurl.com", "t.co", "is.gd", "buff.ly", "ow.ly", "cutt.ly"
-}
 
 class PhishingDetector:
     def __init__(self):
-        self._initialize_ml_model()
+        self._initialize_message_model()
+        self.url_model = uf.load_url_model()
 
-    def _initialize_ml_model(self):
-        """
-        Train a calibrated baseline NLP/text classifier for phishing signals.
-        """
-        training_corpus = [
-            # Phishing / Scam samples
-            ("URGENT: Your Microsoft 365 account will be suspended within 24 hours. Click here to verify credentials.", 1),
-            ("Notice from PayPal: Unauthorized login attempt detected. Verify your identity immediately to prevent lock.", 1),
-            ("Your parcel could not be delivered due to unpaid customs fee of $2.50. Update details at link below.", 1),
-            ("WIRE INVOICE: Please process the attached invoice immediately per CEO instructions. Keep confidential.", 1),
-            ("Bank Alert: Your debit card has been locked. Text YES or click to restore banking access.", 1),
-            ("HR Department: Important updates regarding employee payroll tax refunds. Submit 2026 tax form here.", 1),
-            ("Security Notification: We noticed a suspicious login from Russia. Confirm your password now.", 1),
-            ("Netflix payment failed! Update billing information immediately or your subscription will terminate.", 1),
-            ("Crypto Wallet: A transaction of 1.45 BTC is pending. Click to cancel or confirm authorization.", 1),
-            ("DocuSign: CEO has sent you an urgent contract to sign. Access document via secure portal.", 1),
-            ("Your Apple ID has been locked for security reasons. Enter your recovery key to unlock.", 1),
-            ("SMS Alert: USPS delivery exception. Redeliver package by confirming residential address.", 1),
-            # Benign / Legitimate samples
-            ("Hi team, attached is the meeting agenda for Thursday's architecture review. See you in the conference room.", 0),
-            ("Your weekly project summary: 14 tickets completed, 3 pull requests merged. Good job everyone.", 0),
-            ("Reminder: Company all-hands meeting starts at 3:00 PM EST on Google Meet.", 0),
-            ("Thank you for your order! Your receipt #88192 is attached. Estimated delivery is Friday.", 0),
-            ("Quarterly financial report is available on the internal intranet share for your review.", 0),
-            ("Please find the updated documentation for the Python backend API deployment.", 0),
-            ("Welcome to the cybersecurity newsletter. Today we discuss hardening Linux SSH daemons.", 0),
-            ("Lunch order poll is now open. Please submit your preferences by 11:30 AM.", 0),
-            ("System maintenance scheduled for Saturday 2:00 AM UTC. Downtime expected to be 15 minutes.", 0),
-            ("Code review requested for PR #245: Added unit tests for database connection pooling.", 0),
-            ("The project sprint kickoff is set for Monday morning. Please review the backlog items.", 0),
-            ("Your subscription renewal receipt for the annual cloud storage service plan.", 0),
-        ]
-        
-        texts = [x[0] for x in training_corpus]
-        labels = [x[1] for x in training_corpus]
-        
-        self.vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1, lowercase=True)
-        X = self.vectorizer.fit_transform(texts)
-        self.classifier = LogisticRegression(C=2.0, max_iter=200)
-        self.classifier.fit(X, labels)
+    def _initialize_message_model(self):
+        """Text classifier for message bodies. Trained on a small labelled corpus (see docs/detection-evaluation.md)."""
+        corpus = json.loads(MESSAGE_TRAINING_PATH.read_text())
+        self.vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1, lowercase=True, sublinear_tf=True)
+        X = self.vectorizer.fit_transform([t for t, _ in corpus])
+        self.classifier = LogisticRegression(C=3.0, max_iter=500, class_weight="balanced")
+        self.classifier.fit(X, [y for _, y in corpus])
+
+    # ------------------------------------------------------------------ URLs
+
+    def score_url(self, raw_url: str) -> Tuple[int, List[IndicatorDetail], dict]:
+        """Score one URL as text. The URL is never fetched and no DNS lookup is made."""
+        u = uf.ParsedUrl(raw_url)
+        indicators: List[IndicatorDetail] = []
+        features = {"hostname": u.hostname, "registrable_domain": u.registrable, "path_length": len(u.path),
+                    "has_query_params": bool(u.query), "scheme": u.scheme}
+        score = 5
+
+        def add(points, category, signal, severity, description):
+            nonlocal score
+            score += points
+            indicators.append(IndicatorDetail(category=category, signal=signal, weight=points, severity=severity, description=description))
+
+        if not u.hostname:
+            return 5, [IndicatorDetail(category="Heuristic Evaluation", signal="No host found", weight=0, severity="Low",
+                                       description="The text does not contain a recognisable web address.")], features
+
+        rank = uf.popular_domains().get(u.registrable)
+        trusted = rank is not None and not u.on_user_content_host
+        features.update({"popularity_rank": rank, "on_user_content_host": u.on_user_content_host, "internal_host": bool(u.is_internal)})
+
+        if u.is_internal:
+            indicators.append(IndicatorDetail(
+                category="Network / Addressing", signal="Internal address", weight=0, severity="Low",
+                description="A private, loopback or single-label host. External reputation does not apply; it is only suspicious if it appears where an external address is expected."))
+            if u.has_userinfo:
+                add(35, "URI Deception", "Embedded '@' Authority Deception", "High", "Text before '@' is read as a username, hiding the real destination host.")
+            return min(score, 40), indicators, features
+
+        if u.is_ip:
+            add(35, "Network / Addressing", "Raw IP Hostname", "High", "Business portals use registered domain names; a bare IP address is typical of phishing kits.")
+        if u.tld in uf.SUSPICIOUS_TLDS:
+            add(15, "Domain Architecture", f"Higher-risk TLD (.{u.tld})", "Medium", "This TLD is cheap and heavily used for disposable infrastructure. Many legitimate sites use it too, so it only adds weight.")
+        brand = uf.brand_impersonated(u)
+        if brand:
+            add(45, "Impersonation", f"Brand Squatting ({brand})", "Critical", f"The host names '{brand}' but its registered domain ({u.registrable}) is not one that {brand} uses.")
+        else:
+            look = uf.lookalike_of(u)
+            if look:
+                add(35, "Impersonation", f"Look-alike of {look}", "High", f"{u.registrable} is one character or look-alike away from the popular domain {look}.")
+        words = uf.credential_words(u)
+        if words and not trusted:
+            added = min(len(words) * 10, 20)
+            add(added, "Intent Pattern", f"Authentication wording in URL ({', '.join(words[:3])})", "Medium", "The address asks for sign-in, verification or account recovery on a site we have no reason to trust.")
+        if u.on_user_content_host:
+            add(10, "Hosting", "Free page-hosting service", "Low", f"{u.registrable} lets anyone publish a page; most phishing kits use such services, and so do many legitimate projects.")
+        if len(u.labels) - len(u.registrable.split(".")) >= 3:
+            add(15, "DNS Structure", f"Deeply nested subdomains ({len(u.labels)} labels)", "Medium", "Long subdomain chains push the real domain out of view on mobile address bars.")
+        if u.has_userinfo:
+            add(35, "URI Deception", "Embedded '@' Authority Deception", "High", "Text before '@' is read as a username, hiding the real destination host.")
+        if u.hostname in uf.URL_SHORTENERS:
+            add(20, "Redirection", f"Shortened link ({u.hostname})", "Medium", "Shorteners hide the destination.")
+        if u.hostname.startswith("xn--") or ".xn--" in u.hostname:
+            add(20, "Domain Architecture", "Punycode (internationalised) host", "Medium", "Can render as a look-alike of a familiar name.")
+        if u.scheme == "http" and words and not trusted:
+            add(15, "Transport Security", "Credential wording over plain HTTP", "Medium", "A sign-in page without HTTPS.")
+        if not trusted and uf.host_entropy(u) > 3.4:
+            add(10, "Domain Architecture", "Random-looking domain name", "Low", "The registered name looks machine-generated.")
+
+        if self.url_model and not trusted:
+            prob = self.url_model.probability(u)
+            features["url_model_probability"] = round(prob, 3)
+            if prob >= 0.5:
+                points = 25 if prob < 0.7 else 40 if prob < 0.9 else 55
+                add(points, "Machine Learning Classifier", f"URL model: {int(prob * 100)}% similar to known phishing URLs",
+                    "High" if prob >= 0.9 else "Medium",
+                    "Character-pattern model trained on a phishing-feed snapshot against popular legitimate sites.")
+        if trusted and not u.has_userinfo:
+            score = min(score, 25)
+            features["capped_as_popular_domain"] = True
+        return score, indicators, features
 
     def analyze_url(self, raw_url: str) -> PhishingAnalysisResponse:
-        is_safe, msg = validate_url_safe_for_inspection(raw_url)
-        if not is_safe:
-            # Blocked SSRF / private targets
-            return PhishingAnalysisResponse(
-                analysis_id=f"TA-SSRF-{uuid.uuid4().hex[:12].upper()}",
-                timestamp=datetime.now(timezone.utc),
-                submission_type="url",
-                target=raw_url,
-                risk_score=95,
-                risk_category="Critical",
-                detection_engine="SSRF Guard & Security Policy",
-                indicators=[
-                    IndicatorDetail(
-                        category="SSRF / Prohibited Scope",
-                        signal="Internal/Private Address Access Attempt",
-                        weight=95,
-                        severity="Critical",
-                        description=msg
-                    )
-                ],
-                explanation=f"URL inspection aborted: {msg} Access to loopback, link-local, private LAN or metadata addresses is strictly prohibited.",
-                recommended_precautions=[
-                    "Do not route or forward external requests to internal corporate IP ranges.",
-                    "Verify why internal or restricted host addresses are being inspected from untrusted input.",
-                    "Block repeated queries attempting internal service scanning."
-                ],
-                features_extracted={"error": msg, "blocked_by_policy": True},
-                reputation_status="Blocked by Internal SSRF Filter"
-            )
-
-        indicators: List[IndicatorDetail] = []
-        raw_cleaned = raw_url.strip()
-        if not (raw_cleaned.startswith("http://") or raw_cleaned.startswith("https://")):
-            raw_cleaned = "http://" + raw_cleaned
-
-        parsed = urlparse(raw_cleaned)
-        hostname = (parsed.hostname or "").lower()
-        path = parsed.path or ""
-        query = parsed.query or ""
-        total_url = raw_cleaned.lower()
-
-        extracted_features = {
-            "hostname": hostname,
-            "path_length": len(path),
-            "has_query_params": bool(query),
-            "scheme": parsed.scheme
-        }
-
-        score = 5  # Baseline score
-
-        # 1. IP address used as hostname
-        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", hostname):
-            score += 35
-            indicators.append(IndicatorDetail(
-                category="Network / Addressing",
-                signal="Raw IP Hostname",
-                weight=35,
-                severity="High",
-                description="Legitimate business portals use registered domain names. Naked IP hosts are frequently associated with phishing kits."
-            ))
-
-        # 2. Suspicious TLD
-        for tld in SUSPICIOUS_TLDS:
-            if hostname.endswith(tld):
-                score += 25
-                indicators.append(IndicatorDetail(
-                    category="Domain Architecture",
-                    signal=f"High-Risk TLD ({tld})",
-                    weight=25,
-                    severity="Medium",
-                    description=f"Top-level domain '{tld}' has a statistically elevated correlation with disposable phishing infrastructure."
-                ))
-                break
-
-        # 3. Brand impersonation in domain
-        matched_brand = None
-        for brand in FINANCIAL_AND_BRAND_KEYWORDS:
-            if brand in hostname:
-                # Check if it's the authentic domain (e.g. google.com vs google-security-login.xyz)
-                if not (hostname == f"{brand}.com" or hostname.endswith(f".{brand}.com")):
-                    matched_brand = brand
-                    score += 40
-                    indicators.append(IndicatorDetail(
-                        category="Impersonation",
-                        signal=f"Brand Squatting ({brand})",
-                        weight=40,
-                        severity="Critical",
-                        description=f"Domain contains target brand '{brand}' without matching official legitimate domain hierarchy."
-                    ))
-                    break
-
-        # 4. Credential harvesting keywords in URL path/subdomains
-        found_cred_words = [w for w in CREDENTIAL_HARVEST_KEYWORDS if w in total_url]
-        if found_cred_words:
-            added = min(len(found_cred_words) * 12, 30)
-            score += added
-            indicators.append(IndicatorDetail(
-                category="Intent Pattern",
-                signal=f"Authentication Tokens in URL ({', '.join(found_cred_words[:3])})",
-                weight=added,
-                severity="Medium" if added < 20 else "High",
-                description="URL path or subdomain explicitly targets authentication, credential capture, or password reset operations."
-            ))
-
-        # 5. Excessive subdomains count
-        subdomain_parts = hostname.split(".")
-        if len(subdomain_parts) > 4:
-            score += 20
-            indicators.append(IndicatorDetail(
-                category="DNS Structure",
-                signal=f"Excessive Subdomain Nesting ({len(subdomain_parts)} levels)",
-                weight=20,
-                severity="Medium",
-                description="Multi-tier subdomains are often crafted to push the real apex domain off visible mobile address bars."
-            ))
-
-        # 6. Embedded '@' symbol in URL
-        if "@" in raw_cleaned:
-            score += 35
-            indicators.append(IndicatorDetail(
-                category="URI Deception",
-                signal="Embedded '@' Authority Deception",
-                weight=35,
-                severity="High",
-                description="The '@' sign causes browsers to treat preceding characters as username credentials, hiding the true destination host."
-            ))
-
-        # 7. URL shortener used
-        if hostname in URL_SHORTENERS:
-            score += 20
-            indicators.append(IndicatorDetail(
-                category="Redirection",
-                signal=f"Shortened Link Service ({hostname})",
-                weight=20,
-                severity="Medium",
-                description="URL shorteners obscure target landing pages, common in initial SMS and social engineering vectors."
-            ))
-
-        # 8. Unencrypted HTTP for sensitive login
-        if parsed.scheme == "http" and ("login" in total_url or "secure" in total_url):
-            score += 25
-            indicators.append(IndicatorDetail(
-                category="Transport Security",
-                signal="Plaintext HTTP for Authentication",
-                weight=25,
-                severity="High",
-                description="Authentic enterprise credential portals require HTTPS. Plaintext HTTP indicates fraudulent or vulnerable staging."
-            ))
-
-        # 9. Scikit-learn ML assessment on URL string tokens
-        url_text = f"{hostname} {path.replace('/', ' ')} {query.replace('=', ' ')}"
-        X_test = self.vectorizer.transform([url_text])
-        ml_prob = float(self.classifier.predict_proba(X_test)[0][1])
-        ml_score_contrib = int(ml_prob * 30)
-        extracted_features["ml_phishing_probability"] = round(ml_prob, 3)
-
-        if ml_prob > 0.65:
-            indicators.append(IndicatorDetail(
-                category="Machine Learning Classifier",
-                signal=f"Trained NLP Model Classification ({int(ml_prob * 100)}% Phishing Confidence)",
-                weight=ml_score_contrib,
-                severity="High" if ml_prob > 0.8 else "Medium",
-                description="Trained TF-IDF n-gram model detected semantic similarity to verified phishing and scam attack vectors."
-            ))
-            score += ml_score_contrib
-
+        score, indicators, features = self.score_url(raw_url)
         final_score = min(max(score, 2), 99)
         risk_category = self._score_to_category(final_score)
-
-        explanation = self._build_explanation(
-            target_type="URL",
-            category=risk_category,
-            score=final_score,
-            indicators=indicators
-        )
-
-        precautions = self._build_precautions(risk_category, "url")
-
         return PhishingAnalysisResponse(
             analysis_id=f"TA-URL-{uuid.uuid4().hex[:12].upper()}",
             timestamp=datetime.now(timezone.utc),
@@ -267,116 +143,74 @@ class PhishingDetector:
             target=raw_url,
             risk_score=final_score,
             risk_category=risk_category,
-            detection_engine="Heuristic Feature Rules + Scikit-Learn NLP Classifier",
-            indicators=indicators if indicators else [
-                IndicatorDetail(
-                    category="Heuristic Evaluation",
-                    signal="Standard Web Domain Structure",
-                    weight=0,
-                    severity="Low",
-                    description="No overtly deceptive homoglyphs, high-risk TLDs, or credential harvesting tokens detected in URL string."
-                )
-            ],
-            explanation=explanation,
-            recommended_precautions=precautions,
-            features_extracted=extracted_features,
-            reputation_status="Heuristic/ML Analysis (Live Reputation API key not configured in .env)"
+            detection_engine="URL rules + character n-gram model" if self.url_model else "URL rules (model file missing)",
+            indicators=indicators or [IndicatorDetail(
+                category="Heuristic Evaluation", signal="Ordinary web address", weight=0, severity="Low",
+                description="No deceptive structure, brand misuse or risky pattern found in the address itself.")],
+            explanation=self._build_explanation("URL", risk_category, final_score, indicators),
+            recommended_precautions=self._build_precautions(risk_category, "url"),
+            features_extracted=features,
+            reputation_status="Local analysis only: the address is not fetched and no reputation service was asked",
         )
+
+    # --------------------------------------------------------------- messages
 
     def analyze_message(self, content: str, submission_type: str, email_subject: str = None, sender_info: str = None) -> PhishingAnalysisResponse:
         indicators: List[IndicatorDetail] = []
         combined_text = f"{email_subject or ''} {content}".strip()
         lower_text = combined_text.lower()
         score = 8
+        features = {"char_count": len(combined_text), "word_count": len(combined_text.split()), "submission_type": submission_type,
+                    "has_subject": bool(email_subject), "has_sender": bool(sender_info)}
 
-        extracted_features = {
-            "char_count": len(combined_text),
-            "word_count": len(combined_text.split()),
-            "submission_type": submission_type,
-            "has_subject": bool(email_subject),
-            "has_sender": bool(sender_info)
-        }
+        def add(points, category, signal, severity, description):
+            nonlocal score
+            score += points
+            indicators.append(IndicatorDetail(category=category, signal=signal, weight=points, severity=severity, description=description))
 
-        # 1. Urgent call to action / Coercive psychology
-        urgency_matches = [u for u in URGENCY_TRIGGERS if u in lower_text]
-        if urgency_matches:
-            added = min(len(urgency_matches) * 15, 45)
-            score += added
-            indicators.append(IndicatorDetail(
-                category="Social Engineering",
-                signal=f"Coercive Urgency Trigger ({', '.join(urgency_matches[:3])})",
-                weight=added,
-                severity="High",
-                description="Message induces artificial panic, immediate deadlines, or financial consequences to bypass victim critical thinking."
-            ))
+        reassured = bool(NEGATION.search(combined_text))
+        groups = [
+            ("Social Engineering", "Pressure", PRESSURE, 12, "High", "Artificial deadlines or consequences meant to rush the reader."),
+            ("Social Engineering", "Secrecy or unavailability", SECRECY, 12, "High", "Asks the reader to keep quiet or not to verify by another channel."),
+            ("Credential Harvesting", "Credential request", CREDENTIAL, 0 if reassured else 28, "High", "Directs the reader to hand over or enter authentication details."),
+            ("Fraud Pattern (BEC)", "Payment or banking-detail request", PAYMENT, 28, "Critical", "Asks for money, gift cards or a change of payment details."),
+            ("Malware Delivery", "Asks the reader to run a file", EXECUTABLE, 40, "Critical", "Asks the reader to open or run an attachment or installer."),
+            ("Lure", "Common phishing lure", LURE, 14, "Medium", "Voicemail, QR code, shared-document, prize or account-problem pretext."),
+        ]
+        hit_groups = 0
+        for category, label, pattern, points, severity, description in groups:
+            found = sorted({m.group(0).lower() for m in pattern.finditer(combined_text)})
+            if found and points:
+                hit_groups += 1
+                add(points, category, f"{label} ({', '.join(found[:3])})", severity, description)
+        if hit_groups >= 3:
+            add(10, "Social Engineering", "Several phishing traits together", "High", "Pressure, a request and a pretext in one message is far more typical of fraud than any one alone.")
+        features["signal_groups_hit"] = hit_groups
 
-        # 2. Financial / Wire / Gift card requests (Business Email Compromise - BEC)
-        bec_terms = ["wire transfer", "gift card", "direct deposit", "routing number", "invoice payment", "w-2", "cryptocurrency"]
-        bec_hits = [t for t in bec_terms if t in lower_text]
-        if bec_hits:
-            score += 35
-            indicators.append(IndicatorDetail(
-                category="Fraud Pattern (BEC)",
-                signal=f"Direct Financial Action Request ({', '.join(bec_hits)})",
-                weight=35,
-                severity="Critical",
-                description="Classic Business Email Compromise (BEC) pattern requesting unauthorized fund disbursement or payment method modification."
-            ))
+        urls = re.findall(r"(?:https?://|www\.)[^\s<>\"')]+", combined_text)[:10]
+        features["embedded_urls_count"] = len(urls)
+        if urls:
+            results = [self.score_url(u) for u in urls]
+            worst_score, worst_ind, _ = max(results, key=lambda r: r[0])
+            worst = urls[results.index(max(results, key=lambda r: r[0]))]
+            features["worst_embedded_url"] = worst
+            features["worst_embedded_url_score"] = worst_score
+            if worst_score >= ALERT_SCORE:
+                add(55, "Embedded Links", f"Link scored {worst_score}/100 ({worst_ind[0].signal})" if worst_ind else "High-risk link", "Critical",
+                    f"The message links to {worst}, which looks like a phishing address.")
+            elif worst_score >= SUSPICIOUS_SCORE:
+                add(15, "Embedded Links", f"Link scored {worst_score}/100", "Medium", f"The message links to {worst}, which has suspicious traits.")
+            else:
+                add(3, "Embedded Links", f"{len(urls)} link(s), none suspicious", "Low", "Links were checked as text; none looks deceptive.")
 
-        # 3. Credential Harvesting prompts
-        cred_prompts = ["verify your account", "confirm your password", "login here", "reset password", "two-factor", "otp code", "security question"]
-        cred_hits = [p for p in cred_prompts if p in lower_text]
-        if cred_hits:
-            score += 30
-            indicators.append(IndicatorDetail(
-                category="Credential Harvesting",
-                signal=f"Identity Verification Directive ({', '.join(cred_hits[:2])})",
-                weight=30,
-                severity="High",
-                description="Message directs recipient to external input mechanisms for authentication tokens or credentials."
-            ))
-
-        # 4. Embedded URLs in text
-        found_urls = re.findall(r"https?://[^\s]+", combined_text)
-        extracted_features["embedded_urls_count"] = len(found_urls)
-        if found_urls:
-            score += 15
-            indicators.append(IndicatorDetail(
-                category="Embedded Links",
-                signal=f"Embedded Hyperlinks Detected ({len(found_urls)} link(s))",
-                weight=15,
-                severity="Medium",
-                description="Contains embedded web destinations. Attackers frequently use clickable anchors to lead victims to spoofed portals."
-            ))
-
-        # 5. ML Model NLP Prediction
-        X_test = self.vectorizer.transform([combined_text])
-        ml_prob = float(self.classifier.predict_proba(X_test)[0][1])
-        ml_contrib = int(ml_prob * 35)
-        extracted_features["ml_phishing_probability"] = round(ml_prob, 3)
-
-        if ml_prob > 0.50:
-            indicators.append(IndicatorDetail(
-                category="Machine Learning Classifier",
-                signal=f"NLP Language Model Score ({int(ml_prob * 100)}% Threat Probability)",
-                weight=ml_contrib,
-                severity="High" if ml_prob > 0.75 else "Medium",
-                description="Scikit-learn logistic regression engine evaluated language structure as strongly matching fraudulent correspondence."
-            ))
-            score += ml_contrib
+        prob = float(self.classifier.predict_proba(self.vectorizer.transform([combined_text]))[0][1])
+        features["ml_phishing_probability"] = round(prob, 3)
+        if prob > 0.6:
+            add(int(prob * 30), "Machine Learning Classifier", f"Text model: {int(prob * 100)}% similar to known phishing wording",
+                "High" if prob > 0.8 else "Medium", "Word-pattern model trained on a small labelled message set; treat as a supporting signal.")
 
         final_score = min(max(score, 3), 99)
         risk_category = self._score_to_category(final_score)
-
-        explanation = self._build_explanation(
-            target_type="Email/Message",
-            category=risk_category,
-            score=final_score,
-            indicators=indicators
-        )
-
-        precautions = self._build_precautions(risk_category, submission_type)
-
         return PhishingAnalysisResponse(
             analysis_id=f"TA-MSG-{uuid.uuid4().hex[:12].upper()}",
             timestamp=datetime.now(timezone.utc),
@@ -384,20 +218,14 @@ class PhishingDetector:
             target=(email_subject or content[:60] + "..."),
             risk_score=final_score,
             risk_category=risk_category,
-            detection_engine="Heuristic NLP + Scikit-Learn Vectorizer Classifier",
-            indicators=indicators if indicators else [
-                IndicatorDetail(
-                    category="Heuristic Evaluation",
-                    signal="Normal Conversational Tone",
-                    weight=0,
-                    severity="Low",
-                    description="No coercive deadlines, banking routing requests, or credential harvest vectors detected."
-                )
-            ],
-            explanation=explanation,
-            recommended_precautions=precautions,
-            features_extracted=extracted_features,
-            reputation_status="Heuristic/ML Analysis (Live Reputation API key not configured in .env)"
+            detection_engine="Message rules + link analysis + word-pattern model",
+            indicators=indicators or [IndicatorDetail(
+                category="Heuristic Evaluation", signal="Ordinary message", weight=0, severity="Low",
+                description="No pressure, payment request, credential request or suspicious link found.")],
+            explanation=self._build_explanation("Message", risk_category, final_score, indicators),
+            recommended_precautions=self._build_precautions(risk_category, submission_type),
+            features_extracted=features,
+            reputation_status="Local analysis only: no reputation service was asked",
         )
 
     def _score_to_category(self, score: int) -> str:

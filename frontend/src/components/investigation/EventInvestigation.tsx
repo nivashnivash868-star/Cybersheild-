@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { X, Check, ExternalLink } from 'lucide-react';
 import { api } from '../../api/client';
-import { EventDetail } from '../../types';
+import { EventDetail, ThreatIntelResult } from '../../types';
 import { SimulatedBadge } from '../common/Simulated';
+import { useLoad } from '../../hooks/useLoad';
 
 const sev: Record<string, string> = {
   Critical: 'text-red-600 dark:text-red-400', High: 'text-amber-600 dark:text-amber-400',
@@ -22,16 +23,24 @@ export const EventInvestigation: React.FC<Props> = ({ eventId, onClose, onOpenIn
   const [d, setD] = useState<EventDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [intel, setIntel] = useState<Record<string, ThreatIntelResult | string>>({});
 
   const load = () => api.getEventDetail(eventId).then(setD).catch((e) => setError(e.message));
-  useEffect(() => { void load(); }, [eventId]);
+  useLoad(load, [eventId]);
 
   const ack = async () => {
     setBusy(true);
     try { await api.acknowledgeEvent(eventId, ''); await load(); onChanged?.(); } catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
 
+  const checkReputation = async (indicator: string) => {
+    setIntel((m) => ({ ...m, [indicator]: 'Checking…' }));
+    try { const r = await api.threatIntel(indicator); setIntel((m) => ({ ...m, [indicator]: r })); }
+    catch (e: any) { setIntel((m) => ({ ...m, [indicator]: e.message })); }
+  };
+
   const ev = d?.event;
+  const indicators = ev ? Array.from(new Set([ev.source_ip, ev.dest_ip, ev.domain].filter((v): v is string => !!v))) : [];
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-start justify-center overflow-y-auto p-4" role="dialog" aria-modal="true" aria-label="Alert investigation">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-3xl border border-slate-200 dark:border-slate-800 my-8">
@@ -62,6 +71,37 @@ export const EventInvestigation: React.FC<Props> = ({ eventId, onClose, onOpenIn
               </dl>
               <p className="mt-3 text-slate-600 dark:text-slate-400"><b>Recommended:</b> {ev.recommended_action}</p>
             </section>
+
+            {indicators.length > 0 && (
+              <section>
+                <h3 className="font-bold text-slate-900 dark:text-white mb-1.5">Reputation</h3>
+                <ul className="space-y-2">
+                  {indicators.map((ind) => {
+                    const r = intel[ind];
+                    return (
+                      <li key={ind} className="flex flex-wrap items-start gap-2">
+                        <span className="font-mono text-slate-800 dark:text-slate-200 break-all">{ind}</span>
+                        <button onClick={() => void checkReputation(ind)} className="text-sky-600 dark:text-sky-400 font-semibold hover:underline">Check reputation</button>
+                        {typeof r === 'string' && <span className="text-slate-500 basis-full">{r}</span>}
+                        {r && typeof r !== 'string' && (
+                          <div className="basis-full text-slate-600 dark:text-slate-400">
+                            {r.note && <p>{r.note}</p>}
+                            {r.results.length === 0 && !r.note && <p>No reputation service applies to this indicator.</p>}
+                            {r.results.map((x) => (
+                              <p key={x.provider}>
+                                <b className={x.verdict === 'malicious' ? 'text-red-600 dark:text-red-400' : x.verdict === 'suspicious' ? 'text-amber-600 dark:text-amber-400' : ''}>
+                                  {x.provider === 'virustotal' ? 'VirusTotal' : x.provider === 'abuseipdb' ? 'AbuseIPDB' : x.provider}:
+                                </b> {x.summary ?? x.status}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
 
             <section>
               <h3 className="font-bold text-slate-900 dark:text-white mb-1.5">How automation handled it</h3>

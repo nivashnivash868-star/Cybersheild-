@@ -39,7 +39,7 @@ def fmt(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def build(seed: int):
+def build(seed: int, scenario: str = "attack"):
     rng = random.Random(seed)
     now = datetime.utcnow().replace(microsecond=0)
     users = sorted({f"{rng.choice(FIRST)}.{rng.choice(LAST)}@{DOMAIN}" for _ in range(60)})[:40] + [VICTIM]
@@ -62,6 +62,27 @@ def build(seed: int):
         s, r = rng.sample(users, 2)
         t = now - timedelta(seconds=rng.randint(0, 6 * 3600))
         mails.append((f"benign-{i}", fmt(t), s, r, rng.choice(subjects), "Hi, just following up on the earlier thread. Thanks."))
+
+    if scenario != "attack":
+        # Scenarios without an attack, used to measure false alarms:
+        #   quiet            only the benign background
+        #   forgot_password  a user fails 8 times from their own workstation, then succeeds
+        #   cloud_backup     a workstation uploads 6 x 20 MB to a cloud-storage address (legitimate nightly backup)
+        #   new_hire_burst   many users sign in for the first time at 9am, a few typos each
+        if scenario == "forgot_password":
+            u = users[3]
+            for i in range(8):
+                auth.append((uuid.uuid4().hex, fmt(now - timedelta(hours=1, seconds=-i * 25)), u, ips[u], "FAILURE"))
+            auth.append((uuid.uuid4().hex, fmt(now - timedelta(hours=1, seconds=-300)), u, ips[u], "SUCCESS"))
+        elif scenario == "cloud_backup":
+            for i in range(6):
+                flows.append((uuid.uuid4().hex, fmt(now - timedelta(hours=2, seconds=-i * 60)), ips[users[5]], "52.95.110.1", 443, "TCP", 20_000_000, 14_000))
+        elif scenario == "new_hire_burst":
+            for u in users[10:30]:
+                for i in range(rng.randint(1, 3)):
+                    auth.append((uuid.uuid4().hex, fmt(now - timedelta(hours=1, seconds=-i * 15)), u, ips[u], "FAILURE"))
+                auth.append((uuid.uuid4().hex, fmt(now - timedelta(hours=1, seconds=-90)), u, ips[u], "SUCCESS"))
+        return auth, flows, mails
 
     # the planted story
     mails.append(("story-phish-1", fmt(now - timedelta(hours=5)), "it-support@micr0soft-verify.xyz", VICTIM,

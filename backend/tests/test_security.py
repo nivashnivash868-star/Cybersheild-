@@ -16,6 +16,8 @@ API = "/api/v1"
 PUBLIC = {
     ("POST", f"{API}/auth/login"), ("POST", f"{API}/auth/forgot-password"), ("POST", f"{API}/auth/reset-password"),
     ("GET", f"{API}/system/health"), ("GET", API),
+    ("GET", f"{API}/auth/sso/config"), ("GET", f"{API}/auth/sso/login"), ("GET", f"{API}/auth/sso/callback"),
+    ("POST", f"{API}/response/callback"),     # authenticated by HMAC signature, covered in test_response_connector.py
 }
 
 

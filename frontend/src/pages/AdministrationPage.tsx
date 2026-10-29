@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { ShieldCheck, UserPlus, RefreshCw, Search, BadgeCheck, TriangleAlert } from 'lucide-react';
 import { api } from '../api/client';
-import { AdminUser, AuditEntry, IntegrationRow, PermissionRow, SettingDef, UserRole, UserSession } from '../types';
+import { AdminUser, AuditEntry, IntegrationRow, IntegrationTestResult, PermissionRow, SettingDef, UserRole, UserSession } from '../types';
+import { useLoad } from '../hooks/useLoad';
 
 interface Props {
   currentUser: UserSession;
@@ -28,6 +29,7 @@ export const AdministrationPage: React.FC<Props> = ({ currentUser }) => {
   const [settings, setSettings] = useState<SettingDef[]>([]);
   const [draft, setDraft] = useState<Record<string, number | string>>({});
   const [integrations, setIntegrations] = useState<IntegrationRow[]>([]);
+  const [tests, setTests] = useState<Record<string, IntegrationTestResult | 'running'>>({});
   const [matrix, setMatrix] = useState<PermissionRow[]>([]);
 
   // audit
@@ -39,7 +41,7 @@ export const AdministrationPage: React.FC<Props> = ({ currentUser }) => {
     try { setUsers(await api.getUsers()); } catch (e: any) { setError(e.message); }
   }, []);
 
-  const loadConfig = useCallback(async () => {
+  const loadConfig = async () => {
     try {
       const [s, i, m] = await Promise.all([api.getSecuritySettings(), api.getIntegrations(), api.getPermissions()]);
       setSettings(s);
@@ -47,15 +49,30 @@ export const AdministrationPage: React.FC<Props> = ({ currentUser }) => {
       setIntegrations(i);
       setMatrix(m);
     } catch (e: any) { setError(e.message); }
-  }, []);
+  };
+
+  const runTest = async (key: string) => {
+    let to: string | undefined;
+    if (key === 'sms') {
+      to = window.prompt('Phone number to send a test text to (+15551234567). It may cost a few cents.')?.trim();
+      if (!to) return;
+    }
+    setTests((t) => ({ ...t, [key]: 'running' }));
+    try {
+      const r = await api.testIntegration(key, to);
+      setTests((t) => ({ ...t, [key]: r }));
+    } catch (e: any) {
+      setTests((t) => ({ ...t, [key]: { key, ok: false, detail: e.message, latency_ms: 0 } }));
+    }
+  };
 
   const loadAudit = useCallback(async () => {
     try { setEntries(await api.getAudit({ q: search.trim() || undefined, limit: 100 })); } catch (e: any) { setError(e.message); }
   }, [search]);
 
-  useEffect(() => { if (tab === 'users') void loadUsers(); }, [tab, loadUsers]);
-  useEffect(() => { if (tab === 'audit') void loadAudit(); }, [tab, loadAudit]);
-  useEffect(() => { if (tab === 'config') void loadConfig(); }, [tab, loadConfig]);
+  useLoad(loadUsers, [loadUsers], { enabled: tab === 'users' });
+  useLoad(loadAudit, [loadAudit], { enabled: tab === 'audit' });
+  useLoad(loadConfig, [], { enabled: tab === 'config' });
 
   const act = async (label: string, fn: () => Promise<unknown>, after?: () => Promise<void>) => {
     setBusy(true);
@@ -260,13 +277,27 @@ export const AdministrationPage: React.FC<Props> = ({ currentUser }) => {
           <section className={card + ' p-4 space-y-3'}>
             <h2 className="text-sm font-bold text-slate-900 dark:text-white">Security integrations</h2>
             <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {integrations.map((i) => (
-                <li key={i.name} className="py-2 text-xs flex flex-wrap items-center gap-x-3">
-                  <span className={`w-2 h-2 rounded-full ${i.configured ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
-                  <span className="font-semibold text-slate-900 dark:text-white w-64">{i.name}</span>
-                  <span className="text-slate-500 flex-1">{i.configured ? 'Connected' : 'Not connected'} · {i.detail}{i.synthetic ? ' · data marked simulated' : ''}</span>
-                </li>
-              ))}
+              {integrations.map((i) => {
+                const t = i.key ? tests[i.key] : undefined;
+                const tested = t && t !== 'running' ? t : undefined;
+                const dot = tested ? (tested.ok ? 'bg-emerald-500' : 'bg-red-500') : i.state === 'connected' ? 'bg-emerald-500' : i.configured ? 'bg-amber-400' : 'bg-slate-300 dark:bg-slate-600';
+                const label = tested ? (tested.ok ? 'Test passed' : 'Test failed') : i.state === 'connected' ? 'Connected' : i.configured ? 'Configured, not verified' : 'Not set up';
+                return (
+                  <li key={i.name} className="py-2 text-xs flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className={`w-2 h-2 rounded-full ${dot}`} />
+                    <span className="font-semibold text-slate-900 dark:text-white w-64">{i.name}</span>
+                    <span className="text-slate-500 flex-1 min-w-[16rem]">
+                      {label} · {tested ? `${tested.detail} (${tested.latency_ms} ms)` : i.detail}{i.synthetic ? ' · data marked simulated' : ''}
+                    </span>
+                    {i.key && (
+                      <button disabled={t === 'running'} onClick={() => void runTest(i.key!)}
+                        className="px-2.5 py-1 rounded-md border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">
+                        {t === 'running' ? 'Testing…' : 'Test'}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
             <p className="text-[11px] text-slate-500">Credentials are set in the server environment, never in the browser. Firewall feed credentials are managed on the Blocklist page; alert rules on SOC Operations.</p>
           </section>

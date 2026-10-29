@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import AgentRun, AuditLog, DecisionRequest, DetectionRule, Incident, SecurityEvent, User, naive_utc_now
-from app.services import settings_store, soc_automation
+from app.config import settings
+from app.services import response_executor, settings_store, soc_automation
 from app.utils.auth import ADMIN_ROLES, STAFF_ROLES, require_roles
 
 router = APIRouter(prefix="/soc", tags=["Tiered SOC: L1/L2 automation, L3 human decisions"])
@@ -112,6 +113,7 @@ def overview(db: Session = Depends(get_db), _: User = Depends(require_roles(STAF
         "l3": {"pending": by_decision.get("PENDING", 0), "approved": by_decision.get("APPROVED", 0), "rejected": by_decision.get("REJECTED", 0),
                "pending_by_kind": pending_by_kind, "active_rules": db.query(DetectionRule).filter(DetectionRule.enabled.is_(True)).count()},
         "automation_rate": round(handled_by_automation / triaged, 3) if triaged else None,
+        "response_connector": {"configured": response_executor.configured(), "actions": sorted(settings.response_actions) if response_executor.configured() else []},
     }
 
 

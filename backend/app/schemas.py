@@ -193,6 +193,7 @@ class PhishingAnalysisRequest(BaseModel):
     email_subject: Optional[str] = Field(None, description="Optional email subject line")
     sender_info: Optional[str] = Field(None, description="Sender email address or phone number")
     reporting_employee_email: Optional[str] = None
+    is_sample: bool = Field(False, description="True when the content is one of the built-in sample scenarios: its events are marked SIMULATED")
 
 class IndicatorDetail(BaseModel):
     category: str

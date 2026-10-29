@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Bot, UserCheck, RefreshCw, Play, Check, X, RotateCcw, Plus } from 'lucide-react';
 import { api } from '../api/client';
 import { AgentRun, DecisionRequest, DetectionRule, SocOverview, UserSession } from '../types';
+import { useLoad } from '../hooks/useLoad';
 
 interface Props {
   currentUser: UserSession;
@@ -44,6 +45,8 @@ export const SocOperationsPage: React.FC<Props> = ({ currentUser, onSelectIncide
   const [busy, setBusy] = useState(false);
   const [ruleForm, setRuleForm] = useState({ name: '', kind: 'SUPPRESS', category: '', source_ip: '', user: '', max_risk: '' });
 
+  const connectorFor = (action: string) => !!overview?.response_connector?.configured && overview.response_connector.actions.includes(action);
+
   const load = useCallback(async () => {
     try {
       const [o, d, h, a, r] = await Promise.all([
@@ -60,11 +63,7 @@ export const SocOperationsPage: React.FC<Props> = ({ currentUser, onSelectIncide
     }
   }, [tier]);
 
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), REFRESH_MS);
-    return () => clearInterval(id);
-  }, [load]);
+  useLoad(load, [load], { every: REFRESH_MS });
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -160,8 +159,19 @@ export const SocOperationsPage: React.FC<Props> = ({ currentUser, onSelectIncide
             {d.kind === 'CONTAINMENT' && (
               <p className="text-[11px] text-slate-500 font-mono">On approval: publish <b>{d.proposal.indicator}</b> to the blocklist feeds for {d.proposal.ttl_hours}h.</p>
             )}
-            {d.kind === 'DISABLE_ACCOUNT' && <p className="text-[11px] text-slate-500">On approval: deactivate <b>{d.proposal.account}</b> in CyberShield and sign them out. Disabling the account in your identity provider is still a manual step.</p>}
-            {d.kind === 'HOST_ISOLATION' && <p className="text-[11px] text-slate-500">On approval: record the approval for <b>{d.proposal.host}</b>. A responder carries out the isolation in your EDR; CyberShield is not connected to one.</p>}
+            {d.kind === 'DISABLE_ACCOUNT' && (
+              <p className="text-[11px] text-slate-500">
+                On approval: deactivate <b>{d.proposal.account}</b> in CyberShield and sign them out.{' '}
+                {connectorFor('DISABLE_ACCOUNT') ? 'A signed request also goes to your response connector to disable it in the identity provider; it counts as done only when the connector confirms.' : 'Disabling the account in your identity provider is still a manual step.'}
+              </p>
+            )}
+            {d.kind === 'HOST_ISOLATION' && (
+              <p className="text-[11px] text-slate-500">
+                {connectorFor('HOST_ISOLATION')
+                  ? <>On approval: a signed request to isolate <b>{d.proposal.host}</b> goes to your response connector (EDR / network access control); it counts as done only when the connector confirms.</>
+                  : <>On approval: record the approval for <b>{d.proposal.host}</b>. A responder carries out the isolation in your EDR; no response connector is configured.</>}
+              </p>
+            )}
             {d.kind === 'INCIDENT_CLOSURE' && <p className="text-[11px] text-slate-500">On approval: close the incident as <b>{d.proposal.target_status}</b>. Requested by {d.proposal.requested_by}.</p>}
             {d.kind === 'DETECTION_RULE' && (
               <p className="text-[11px] text-slate-500 font-mono">On approval: {d.proposal.kind} rule when {JSON.stringify(d.proposal.match)}</p>

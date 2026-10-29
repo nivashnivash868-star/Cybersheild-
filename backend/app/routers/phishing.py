@@ -5,18 +5,21 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import ThreatAnalysis, SecurityEvent, AuditLog
+from app.models import ThreatAnalysis, SecurityEvent, AuditLog, User
+from app.utils.auth import require_authenticated_user
 from app.schemas import PhishingAnalysisRequest, PhishingAnalysisResponse
 from app.services.phishing_engine import phishing_detector
+from app.services.enrichment import enrich_url
 
 router = APIRouter(prefix="/phishing", tags=["Phishing & Scam Detection"])
 
 @router.post("/analyze", response_model=PhishingAnalysisResponse)
-def analyze_phishing_submission(request: PhishingAnalysisRequest, db: Session = Depends(get_db)):
+def analyze_phishing_submission(request: PhishingAnalysisRequest, db: Session = Depends(get_db),
+                                user: User = Depends(require_authenticated_user)):
     sub_type = request.submission_type.lower()
     
     if sub_type == "url":
-        result = phishing_detector.analyze_url(request.content)
+        result = enrich_url(db, phishing_detector.analyze_url(request.content))
     elif sub_type in ("email", "sms"):
         result = phishing_detector.analyze_message(
             content=request.content,
@@ -46,6 +49,7 @@ def analyze_phishing_submission(request: PhishingAnalysisRequest, db: Session = 
     # If evaluated as Medium, High, or Critical, generate SecurityEvent in SOC stream
     if result.risk_score >= 35:
         event_obj = SecurityEvent(
+            is_simulated=request.is_sample,
             event_id=f"SEC-PHISH-{uuid.uuid4().hex[:12].upper()}",
             timestamp=datetime.now(timezone.utc),
             event_source=f"User Submission / {sub_type.upper()} Analyzer",
@@ -66,7 +70,7 @@ def analyze_phishing_submission(request: PhishingAnalysisRequest, db: Session = 
     # Log action in audit trail
     audit = AuditLog(
         action="PHISHING_ANALYSIS_RUN",
-        actor="SOC Analyst / Portal User",
+        actor=user.email,
         resource_type="ThreatAnalysis",
         resource_id=result.analysis_id,
         details=f"Analyzed {sub_type} target '{result.target[:40]}'. Score: {result.risk_score}/100 ({result.risk_category})."

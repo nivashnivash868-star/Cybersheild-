@@ -1,10 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
-  ShieldCheck, AlertTriangle, Globe, Bell, CheckCircle2,
-  ExternalLink, Mail, Send, Lock, ArrowRight, ShieldAlert,
-  ThumbsUp, Shield
+  AlertTriangle, Globe, Bell, CheckCircle2,
+  Mail
 } from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
 import { api } from '../api/client';
 import { UserSession } from '../types';
 
@@ -14,11 +12,10 @@ interface Props {
 }
 
 export const EmployeeDashboardPage: React.FC<Props> = ({ currentUser, onNavigateToTab }) => {
-  const { theme } = useTheme();
   const employeeName = currentUser?.name ?? '';
   const employeeEmail = currentUser?.email ?? '';
 
-  const [reportType, setReportType] = useState<'email' | 'url'>('email');
+  const reportType = 'email' as const;
   const [reportContent, setReportContent] = useState('');
   const [submittingReport, setSubmittingReport] = useState(false);
   const [reportSuccess, setReportSuccess] = useState(false);

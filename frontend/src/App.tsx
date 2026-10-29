@@ -5,7 +5,6 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EmployeeManagementPage } from './pages/EmployeeManagementPage';
 import { MonitoringCenterPage } from './pages/MonitoringCenterPage';
-import { MonitoringSourcesPage } from './pages/MonitoringSourcesPage';
 import { ThreatDetectionPage } from './pages/ThreatDetectionPage';
 import { DLPPage } from './pages/DLPPage';
 import { URLWarningModal } from './pages/URLWarningModal';
@@ -25,6 +24,7 @@ import { AdministrationPage } from './pages/AdministrationPage';
 import { SocOperationsPage } from './pages/SocOperationsPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { DashboardMetrics, SessionState, UserSession } from './types';
+import { useLoad } from './hooks/useLoad';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
@@ -72,13 +72,7 @@ export function App() {
     }
   };
 
-  useEffect(() => {
-    if (currentUser) {
-      fetchGlobalMetrics();
-      const interval = setInterval(fetchGlobalMetrics, 30000);
-      return () => clearInterval(interval);
-    }
-  }, [currentUser]);
+  useLoad(fetchGlobalMetrics, [currentUser], { every: 30000, enabled: !!currentUser });
 
   const handleLoginSuccess = (user: UserSession) => {
     setPendingSession(null);
@@ -168,13 +162,14 @@ export function App() {
           <Header
             currentUser={currentUser}
             openInvestigationsCount={metrics?.open_investigations ?? 0}
+            systemStatus={metrics?.system_status}
             onLogout={handleLogout}
             onToggleSidebar={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
             onSearch={handleGlobalSearch}
             onOpenProfileSettings={() => setCurrentTab('settings')}
           />
 
-          {/* Active View Content (13 Mockup Screens) */}
+          {/* Active view */}
           <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto bg-slate-50 dark:bg-slate-950 transition-colors">
             {/* Screen 2: Dashboard (SOC / Admin) */}
             {(currentTab === 'overview' || currentTab === 'dashboard') && (
@@ -208,7 +203,6 @@ export function App() {
               <URLWarningModal
                 employeeEmail={currentUser.email}
                 onSafeReturn={() => setCurrentTab('overview')}
-                onClose={() => setCurrentTab('overview')}
               />
             )}
 
@@ -222,7 +216,7 @@ export function App() {
               />
             )}
 
-            {/* Screen 9: Employee Dashboard (Personalized for Rahul Kumar / Employee) */}
+            {/* Employee dashboard */}
             {(currentTab === 'employee_dashboard' || currentTab === 'employee_portal') && (
               <EmployeeDashboardPage
                 currentUser={currentUser}

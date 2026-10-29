@@ -433,3 +433,44 @@ class FeedToken(Base):
     last_fetched_at = Column(DateTime, nullable=True)
     last_fetched_version = Column(String(64), nullable=True)
     last_fetched_ip = Column(String(64), nullable=True)
+
+
+class ResponseJob(Base):
+    """One approved action handed to the organisation's own automation (identity provider, EDR, SOAR) through a signed webhook.
+
+    QUEUED -> SENDING -> SENT                (the receiver accepted the request; the work is not yet confirmed)
+                      -> COMPLETED           (the receiver reported success, in its reply or a signed callback)
+                      -> FAILED              (the receiver refused, reported failure, or retries ran out)
+    SENT -> UNCONFIRMED                      (no report back within RESPONSE_WEBHOOK_ACK_MINUTES)
+    """
+    __tablename__ = "response_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(String(40), unique=True, index=True, nullable=False)
+    action = Column(String(32), index=True, nullable=False)          # DISABLE_ACCOUNT | HOST_ISOLATION | PING
+    target = Column(String(255), nullable=False)
+    decision_id = Column(Integer, nullable=True, index=True)
+    incident_id = Column(String(64), nullable=True, index=True)
+    approved_by = Column(String(128), nullable=False)
+    status = Column(String(16), default="QUEUED", index=True, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    next_attempt_at = Column(DateTime, nullable=True, index=True)
+    http_status = Column(Integer, nullable=True)
+    last_error = Column(String(500), nullable=True)
+    result_detail = Column(String(500), nullable=True)
+    response_action_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=naive_utc_now, nullable=False)
+    sent_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class ThreatIntelRecord(Base):
+    """Cached answer from a reputation provider for one indicator. Lookups are rate-limited and paid for, so they are kept."""
+    __tablename__ = "threat_intel_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    indicator = Column(String(255), index=True, nullable=False)
+    provider = Column(String(24), index=True, nullable=False)
+    status = Column(String(16), nullable=False)            # ok | not_found | error
+    result_json = Column(Text, nullable=False)
+    fetched_at = Column(DateTime, default=naive_utc_now, index=True, nullable=False)

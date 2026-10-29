@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Search, RefreshCw, RotateCcw } from 'lucide-react';
 import { api } from '../api/client';
 import { NotificationDelivery, UserSession } from '../types';
+import { useLoad } from '../hooks/useLoad';
 
 interface Props {
   currentUser?: UserSession;
@@ -46,11 +47,7 @@ export const NotificationsPage: React.FC<Props> = ({ currentUser }) => {
     }
   }, [status, channel, search]);
 
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), 15000);
-    return () => clearInterval(id);
-  }, [load]);
+  useLoad(load, [load], { every: 15000 });
 
   const retry = async (id: number) => {
     try { await api.retryDelivery(id); await load(); } catch (e: any) { setError(e.message); }

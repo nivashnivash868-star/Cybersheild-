@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import { PhishingPage } from './PhishingPage';
 import { FileAnalysisPage } from './FileAnalysisPage';
 import { NetworkAnomalyPage } from './NetworkAnomalyPage';
@@ -16,7 +16,7 @@ const isPhishing = (e: SecurityEvent) => /(phish|bec|impersonation|spoof|credent
 
 export const ThreatDetectionPage: React.FC<Props> = ({ initialSubTab = 'phishing', onOpenIncident }) => {
   const [subTab, setSubTab] = useState<Tab>(initialSubTab);
-  const include = useCallback(isPhishing, []);
+  const include = isPhishing;
   const tab = (id: Tab, label: string) => (
     <button key={id} onClick={() => setSubTab(id)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${subTab === id ? 'bg-sky-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>{label}</button>
   );

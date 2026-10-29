@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ===== Stage 1: build the React frontend =====
 FROM node:22-slim AS frontend-build
 WORKDIR /build

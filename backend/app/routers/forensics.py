@@ -64,7 +64,7 @@ def get_forensic_investigation(incident_id: str, db: Session = Depends(get_db)):
         if act.executed_at:
             timeline.append({
                 "timestamp": act.executed_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
-                "event_type": "Containment Action (Simulated)",
+                "event_type": "Containment Action (Simulated)" if act.is_simulated else "Containment Action",
                 "source": act.executed_by or "SOC Lead",
                 "category": act.action_type,
                 "severity": "High",

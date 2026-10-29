@@ -52,6 +52,26 @@ class Settings(BaseSettings):
     # Public URL of the app (used in password reset links)
     PUBLIC_BASE_URL: str = "http://localhost:8000"
 
+    # Single sign-on (OpenID Connect, authorization-code flow with PKCE). Users must already exist: nothing is auto-created.
+    OIDC_ISSUER: Optional[str] = None                 # e.g. https://login.microsoftonline.com/<tenant>/v2.0 or https://<org>.okta.com
+    OIDC_CLIENT_ID: Optional[str] = None
+    OIDC_CLIENT_SECRET: Optional[str] = None
+    OIDC_SCOPES: str = "openid email profile"
+    OIDC_REDIRECT_URI: Optional[str] = None           # default: {PUBLIC_BASE_URL}/api/v1/auth/sso/callback
+    OIDC_PROVIDER_NAME: str = "Single sign-on"
+    OIDC_EMAIL_CLAIM: str = "email"
+    OIDC_ALLOWED_EMAIL_DOMAINS: str = ""              # optional comma-separated allow-list
+    OIDC_IDP_ENFORCES_MFA: bool = False               # True: an SSO sign-in counts as two-step verified (the IdP does MFA)
+
+    # Response connector: approved account-disable / host-isolation requests are POSTed (HMAC-signed) to your automation
+    # (SOAR playbook, IdP script, EDR wrapper). See docs/response-connector.md.
+    RESPONSE_WEBHOOK_URL: Optional[str] = None
+    RESPONSE_WEBHOOK_SECRET: Optional[str] = None            # at least 32 characters; shared with the receiver
+    RESPONSE_WEBHOOK_ACTIONS: str = "DISABLE_ACCOUNT,HOST_ISOLATION"
+    RESPONSE_WEBHOOK_TIMEOUT_SECONDS: int = 10
+    RESPONSE_WEBHOOK_MAX_ATTEMPTS: int = 5
+    RESPONSE_WEBHOOK_ACK_MINUTES: int = 60                   # a sent job with no report back after this is shown as UNCONFIRMED
+
     # CORS: the unified build is same-origin and needs none. Add origins for a separate dev frontend.
     CORS_ORIGINS: List[str] = []
 
@@ -92,6 +112,8 @@ class Settings(BaseSettings):
     # The Isolation Forest is trained on a tiny fixed sample and flags ordinary traffic; its Medium "statistical
     # outlier" alerts are left out of ingestion unless you opt in. Rule-based detections (scans, exfiltration, ...) stay.
     ZETARIS_NETWORK_INCLUDE_ML_OUTLIERS: bool = False
+    NETWORK_TRUSTED_DESTINATIONS: str = ""          # comma-separated IPs/CIDRs the network rules ignore (backup targets, update servers)
+    NETWORK_BASELINE_CSV: Optional[str] = None     # CSV of the organisation's ordinary flows (dst_port,bytes,packets) to fit the anomaly model
     ZETARIS_INTERNAL_FAILURE_MULTIPLIER: int = 4  # typos from private addresses need this many times more failures
     # Table names as Zetaris sees them (database.table). Column names default to the schema in
     # docs/zetaris-schema.md and can be overridden with ZETARIS_COLUMNS='{"auth": {"event_time": "ts"}}'.
@@ -99,11 +121,23 @@ class Settings(BaseSettings):
     ZETARIS_TABLE_NETWORK: Optional[str] = None
     ZETARIS_TABLE_EMAIL: Optional[str] = None
     ZETARIS_COLUMNS: dict = {}
+    # How the auth table spells outcomes. Compared case-insensitively. Windows logs use 4625 / 4624, many apps use FAILED / OK.
+    ZETARIS_AUTH_FAILURE_VALUES: str = "FAILURE,FAILED,FAIL"
+    ZETARIS_AUTH_SUCCESS_VALUES: str = "SUCCESS,SUCCEEDED,OK"
 
-    # External reputation integrations (keys only; clients are not implemented yet)
+    # External reputation integrations (clients: services/threat_intel.py)
     VIRUSTOTAL_API_KEY: Optional[str] = None
+    FILE_HASH_FEED_PATH: Optional[str] = None      # text file of known-bad md5/sha256 hashes (see file_analyzer.load_hash_feed)
     PHISHTANK_API_KEY: Optional[str] = None
     ABUSEIPDB_API_KEY: Optional[str] = None
+    # Threat-intelligence lookups (VirusTotal v3, AbuseIPDB v2). Only public indicators are sent: IPs, domains and file hashes.
+    # File contents and internal addresses never leave; full URLs are not sent unless TI_SEND_FULL_URLS is true.
+    TI_LOOKUPS_ENABLED: bool = True
+    TI_CACHE_HOURS: int = 24
+    TI_VT_PER_MINUTE: int = 4                  # the free VirusTotal tier allows 4 requests a minute, 500 a day
+    TI_VT_PER_DAY: int = 500
+    TI_ABUSEIPDB_PER_DAY: int = 1000
+    TI_SEND_FULL_URLS: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -131,6 +165,22 @@ class Settings(BaseSettings):
     def zetaris_configured(self) -> bool:
         has_auth = bool(self.ZETARIS_API_KEY or (self.ZETARIS_USERNAME and self.ZETARIS_PASSWORD))
         return bool(self.ZETARIS_ORG_ID is not None and has_auth)
+
+    @property
+    def oidc_configured(self) -> bool:
+        return bool(self.OIDC_ISSUER and self.OIDC_CLIENT_ID)
+
+    @property
+    def oidc_redirect_uri(self) -> str:
+        return self.OIDC_REDIRECT_URI or f"{self.PUBLIC_BASE_URL.rstrip('/')}{self.API_V1_PREFIX}/auth/sso/callback"
+
+    @property
+    def response_connector_configured(self) -> bool:
+        return bool(self.RESPONSE_WEBHOOK_URL and self.RESPONSE_WEBHOOK_SECRET and len(self.RESPONSE_WEBHOOK_SECRET) >= 32)
+
+    @property
+    def response_actions(self) -> set:
+        return {a.strip().upper() for a in self.RESPONSE_WEBHOOK_ACTIONS.split(",") if a.strip()}
 
     @property
     def database_url(self) -> Optional[str]:

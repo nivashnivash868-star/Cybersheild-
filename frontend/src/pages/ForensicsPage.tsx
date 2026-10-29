@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Fingerprint, Clock, ShieldCheck, FileDown, Layers, CheckCircle2,
-  AlertOctagon, ArrowRight, ExternalLink, Terminal, Tag
+  Clock, FileDown
 } from 'lucide-react';
 import { api } from '../api/client';
 import { ForensicInvestigation, IncidentDetail } from '../types';
 import { SeverityBadge } from '../components/common/SeverityBadge';
+import { useLoad } from '../hooks/useLoad';
 
 interface Props {
   initialIncidentId?: string | null;
@@ -28,7 +28,7 @@ export const ForensicsPage: React.FC<Props> = ({ initialIncidentId }) => {
     }).catch(console.error);
   }, [initialIncidentId]);
 
-  useEffect(() => {
+  useLoad(() => {
     if (!selectedIncidentId) return;
     setLoading(true);
     api.getForensics(selectedIncidentId)

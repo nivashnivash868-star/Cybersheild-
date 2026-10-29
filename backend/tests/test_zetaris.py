@@ -355,3 +355,48 @@ def test_timestamps_in_every_format_zetaris_returns_are_understood(raw, expected
 @pytest.mark.parametrize("raw", [None, "", "not a time", "2026-13-45 99:99:99"])
 def test_unparseable_timestamps_are_none_not_errors(raw):
     assert zetaris_ingest.parse_time(raw) is None
+
+
+# --- real-log robustness: outcome vocabulary and previewing a source -----------------------------------------------------
+def _auth_rows(fake, outcome_fail, outcome_ok, n=12):
+    from datetime import datetime, timedelta
+    now = datetime.utcnow().replace(microsecond=0)
+    rows = [(f"e{i}", (now - timedelta(minutes=30, seconds=-i * 10)).strftime("%Y-%m-%d %H:%M:%S"), "j.doe@corp.test", "45.155.205.233", outcome_fail) for i in range(n)]
+    rows.append(("ok1", (now - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S"), "j.doe@corp.test", "45.155.205.233", outcome_ok))
+    fake.db.execute("DELETE FROM auth_logs")
+    fake.db.executemany("INSERT INTO auth_logs VALUES (?,?,?,?,?)", rows)
+
+
+@pytest.mark.parametrize("fail,ok", [("Failed", "ok"), ("FAILURE", "Success"), ("failed", "OK")])
+def test_other_spellings_of_failed_and_success_are_understood(db, configured, clean_events, fake, fail, ok):
+    _auth_rows(fake, fail, ok)
+    with client_for(fake) as c:
+        zetaris_ingest.run_ingest(db, c)
+    ev = db.query(SecurityEvent).filter(SecurityEvent.event_id.like("ZT-AUTH%")).all()
+    assert any(e.threat_category == "Account Compromise Suspected" for e in ev), [e.threat_category for e in ev]
+
+
+def test_unknown_vocabulary_finds_nothing_and_preview_explains_why(db, configured, clean_events, fake):
+    _auth_rows(fake, "4625", "4624")
+    with client_for(fake) as c:
+        zetaris_ingest.run_ingest(db, c)
+        report = zetaris_ingest.preview(c, "auth")
+    assert not db.query(SecurityEvent).filter(SecurityEvent.event_id.like("ZT-AUTH%")).count()
+    assert any("ZETARIS_AUTH_FAILURE_VALUES" in w for w in report["warnings"]), report["warnings"]
+    assert {v["value"] for v in report["outcome_values"]} == {"4625", "4624"} and report["timestamps_read"] == "5/5"
+
+
+def test_preview_reports_rows_and_timestamp_problems(db, configured, fake):
+    with client_for(fake) as c:
+        r = zetaris_ingest.preview(c, "network")
+    assert r["table"] == "network_flows" and r["sample_rows"] and r["rows_last_24h"] > 0
+    fake.db.execute("UPDATE network_flows SET event_time = 'not a time'")
+    with client_for(fake) as c:
+        assert any("event_time" in w for w in zetaris_ingest.preview(c, "network")["warnings"])
+
+
+def test_preview_endpoint_is_admin_only_and_validates_source(admin, analyst, monkeypatch):
+    assert analyst.get(f"{API}/zetaris/preview", params={"source": "auth"}).status_code == 403
+    assert admin.get(f"{API}/zetaris/preview", params={"source": "evil"}).status_code == 422
+    monkeypatch.setattr(settings, "ZETARIS_TABLE_AUTH", None)
+    assert admin.get(f"{API}/zetaris/preview", params={"source": "auth"}).status_code in (409, 502, 503)

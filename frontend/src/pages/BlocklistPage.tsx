@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Ban, Check, X, Undo2, Plus, KeyRound, Copy, RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 import { BlocklistEntry, FeedTokenInfo, UserSession } from '../types';
+import { useLoad } from '../hooks/useLoad';
 
 interface Props {
   currentUser: UserSession;
@@ -44,7 +45,7 @@ export const BlocklistPage: React.FC<Props> = ({ currentUser }) => {
     }
   }, [filter, isAdmin]);
 
-  useEffect(() => { void load(); }, [load]);
+  useLoad(load, [load]);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);

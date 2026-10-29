@@ -324,6 +324,7 @@ export interface SocOverview {
   l2: { incidents_investigated: number; waiting: number; true_positive: number; needs_human: number; false_positive: number; auto_closed_incidents: number };
   l3: { pending: number; approved: number; rejected: number; pending_by_kind: Record<string, number>; active_rules: number };
   automation_rate: number | null;
+  response_connector?: { configured: boolean; actions: string[] };
 }
 
 export interface AgentRun {
@@ -400,7 +401,16 @@ export interface PermissionRow {
   [role: string]: boolean | string;
 }
 
+export interface IntegrationTestResult {
+  key: string;
+  ok: boolean;
+  detail: string;
+  latency_ms: number;
+}
+
 export interface IntegrationRow {
+  key?: string | null;
+  state?: string;
   name: string;
   configured: boolean;
   detail: string;
@@ -543,3 +553,19 @@ export interface URLInspectionResult {
   soc_alert_generated: boolean;
 }
 
+
+export interface ThreatIntelProviderResult {
+  provider: string;
+  status: string;
+  verdict?: string;
+  summary?: string;
+  cached?: boolean;
+}
+export interface ThreatIntelResult {
+  indicator: string;
+  type: string;
+  results: ThreatIntelProviderResult[];
+  malicious: boolean;
+  suspicious: boolean;
+  note?: string;
+}

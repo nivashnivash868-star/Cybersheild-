@@ -113,8 +113,8 @@ def client(analyst):
 def wipe_soc(db):
     """Empty events, incidents and everything that references them, in foreign-key order (PostgreSQL enforces it)."""
     from app.models import (AgentRun, BlocklistEntry, DecisionRequest, DetectionRule, Incident, IncidentEvidence,
-                            InvestigationNote, ResponseAction, SecurityEvent)
-    for model in (ResponseAction, InvestigationNote, IncidentEvidence, SecurityEvent, AgentRun, DecisionRequest,
+                            InvestigationNote, ResponseAction, ResponseJob, SecurityEvent)
+    for model in (ResponseJob, ResponseAction, InvestigationNote, IncidentEvidence, SecurityEvent, AgentRun, DecisionRequest,
                   DetectionRule, BlocklistEntry, Incident):
         db.query(model).delete(synchronize_session=False)
     db.commit()

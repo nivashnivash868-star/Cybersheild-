@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  Server, Database, Cpu, ShieldCheck, CheckCircle2, AlertTriangle,
-  RefreshCw, Lock, ExternalLink, Activity, Info
+  Database, Cpu, CheckCircle2, RefreshCw, Lock, Activity
 } from 'lucide-react';
 import { api } from '../api/client';
 import { SystemStatusData } from '../types';
+import { useLoad } from '../hooks/useLoad';
 
 export const SystemStatusPage: React.FC = () => {
   const [statusData, setStatusData] = useState<SystemStatusData | null>(null);
@@ -22,9 +22,7 @@ export const SystemStatusPage: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    loadStatus();
-  }, []);
+  useLoad(loadStatus, []);
 
   return (
     <div className="space-y-6">

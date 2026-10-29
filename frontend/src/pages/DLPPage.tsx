@@ -1,16 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  KeyRound, ShieldAlert, Search, Filter, AlertTriangle, CheckCircle2,
-  Lock, EyeOff, RefreshCw, Sparkles, FileCode, Download, ExternalLink
+  Search, Sparkles, Download
 } from 'lucide-react';
 import { api } from '../api/client';
-import { useTheme } from '../context/ThemeContext';
 import { SecretFinding, Severity } from '../types';
+import { useLoad } from '../hooks/useLoad';
 
 export const DLPPage: React.FC = () => {
-  const { theme } = useTheme();
   const [findings, setFindings] = useState<SecretFinding[]>([]);
-  const [loading, setLoading] = useState(true);
   const [timeFilter, setTimeFilter] = useState('Last 30 Days');
   const [severityFilter, setSeverityFilter] = useState('All Severity');
   const [sourceFilter, setSourceFilter] = useState('All Sources');
@@ -18,16 +15,11 @@ export const DLPPage: React.FC = () => {
 
   // Scanner Form state
   const [scanText, setScanText] = useState('');
-  const [sourceType, setSourceType] = useState('GitHub');
-  const [locationRef, setLocationRef] = useState('');
-  const [employeeEmail, setEmployeeEmail] = useState('');
   const [scanning, setScanning] = useState(false);
-  const [scanResult, setScanResult] = useState<{ secrets_found_count: number; findings: SecretFinding[] } | null>(null);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadFindings = async () => {
-    setLoading(true);
     try {
       const data = await api.getDLPFindings();
       setFindings(data ?? []);
@@ -36,29 +28,17 @@ export const DLPPage: React.FC = () => {
       setFindings([]);
       setLoadError(err.message || 'Could not load findings.');
     } finally {
-      setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadFindings();
-  }, []);
+  useLoad(loadFindings, []);
 
   const handleScanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!scanText.trim()) return;
     setScanning(true);
-    setScanResult(null);
     try {
-      const findingsList = await api.scanDLP({
-        content: scanText,
-        source_location: `${sourceType}: ${locationRef}`,
-        employee_email: employeeEmail || undefined,
-      });
-      setScanResult({
-        secrets_found_count: findingsList.length,
-        findings: findingsList,
-      });
+      await api.scanDLP({ content: scanText, source_location: 'Pasted into the scanner' });
       await loadFindings();
     } catch (err: any) {
       alert(`DLP scan failed: ${err.message}`);

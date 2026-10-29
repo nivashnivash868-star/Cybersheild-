@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  ShieldCheck, Search, Bell, Sun, Moon, LogOut, ChevronDown,
-  Menu, User, CheckCircle2, ShieldAlert
+  Search, Bell, Sun, Moon, LogOut, ChevronDown,
+  Menu, User
 } from 'lucide-react';
-import { useTheme } from '../../context/ThemeContext';
+import { useTheme } from '../../context/themeContext';
 import { UserSession } from '../../types';
 
 interface HeaderProps {
   currentUser?: UserSession | null;
   openInvestigationsCount: number;
+  systemStatus?: string;
   onLogout?: () => void;
   onToggleSidebar?: () => void;
   onSearch?: (query: string) => void;
@@ -18,6 +19,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
   openInvestigationsCount,
+  systemStatus,
   onLogout,
   onToggleSidebar,
   onSearch,
@@ -72,15 +74,19 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Controls: System Status Badge, Theme Switcher, Notifications, User Profile */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* System Active Badge */}
-        <div className="hidden lg:flex items-center gap-2 text-xs bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 px-2.5 py-1 rounded-full font-medium">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <span className="text-[11px] font-semibold tracking-tight">System Active</span>
-          <span className="text-[10px] opacity-75 hidden xl:inline">• 24/7 Monitoring</span>
-        </div>
+        {/* Platform status, from the server: database answering and automation worker reporting */}
+        {(() => {
+          const ok = systemStatus === 'Operational';
+          const tone = ok
+            ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60'
+            : 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/60';
+          return (
+            <div title={systemStatus ?? 'Checking…'} className={`hidden lg:flex items-center gap-2 text-xs border px-2.5 py-1 rounded-full font-medium ${tone}`}>
+              <span className={`inline-flex rounded-full h-2 w-2 ${ok ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              <span className="text-[11px] font-semibold tracking-tight">{systemStatus === undefined ? 'Checking…' : ok ? 'Platform healthy' : 'Platform degraded'}</span>
+            </div>
+          );
+        })()}
 
         {/* Light / Dark Mode Toggle */}
         <button

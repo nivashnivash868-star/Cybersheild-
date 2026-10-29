@@ -1,27 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  Users, UserPlus, Search, Filter, CheckCircle2, XCircle,
-  Edit, Trash2, ChevronLeft, ChevronRight, Mail, Phone,
-  Building, Briefcase, RefreshCw, Upload, AlertTriangle
+  UserPlus, Search, Trash2, ChevronLeft, ChevronRight, RefreshCw
 } from 'lucide-react';
 import { api } from '../api/client';
-import { useTheme } from '../context/ThemeContext';
-import { Employee, Severity } from '../types';
+import { Employee } from '../types';
+import { useLoad } from '../hooks/useLoad';
 
 export const EmployeeManagementPage: React.FC = () => {
-  const { theme } = useTheme();
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('All Departments');
   const [statusFilter, setStatusFilter] = useState('All Status');
-  const [currentPage, setCurrentPage] = useState(1);
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
 
   // Form
   const [formData, setFormData] = useState({
@@ -36,7 +29,6 @@ export const EmployeeManagementPage: React.FC = () => {
   const [formError, setFormError] = useState<string | null>(null);
 
   const loadEmployees = async () => {
-    setLoading(true);
     try {
       const data = await api.getEmployees({
         department: departmentFilter !== 'All Departments' ? departmentFilter : undefined,
@@ -48,13 +40,10 @@ export const EmployeeManagementPage: React.FC = () => {
       setEmployees([]);
       setLoadError(err.message || 'Could not load employees.');
     } finally {
-      setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadEmployees();
-  }, [departmentFilter, statusFilter]);
+  useLoad(loadEmployees, [departmentFilter, statusFilter]);
 
   const filteredEmployees = employees.filter((emp) => {
     const matchesSearch =
@@ -236,16 +225,6 @@ export const EmployeeManagementPage: React.FC = () => {
                   </td>
                   <td className="py-3 px-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
-                      <button
-                        onClick={() => {
-                          setSelectedEmp(emp);
-                          setShowEditModal(true);
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition"
-                        title="Edit Employee"
-                      >
-                        <Edit className="w-3.5 h-3.5" />
-                      </button>
                       <button
                         onClick={() => void handleToggleActive(emp)}
                         className="p-1.5 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition"

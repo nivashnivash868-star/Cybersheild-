@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  Mail, Globe, MessageSquare, AlertTriangle, ShieldCheck,
-  Send, Sparkles, CheckCircle2, Copy, Check, Info, ShieldAlert
+  Mail, Globe, MessageSquare, ShieldCheck,
+  Send, Sparkles, CheckCircle2, Copy, Check, Info
 } from 'lucide-react';
 import { api } from '../api/client';
 import { PhishingAnalysisResult } from '../types';
 import { SeverityBadge } from '../components/common/SeverityBadge';
+import { useLoad } from '../hooks/useLoad';
 
 interface PhishingPageProps {
   initialSubmissionType?: 'url' | 'email' | 'sms';
@@ -24,17 +25,19 @@ export const PhishingPage: React.FC<PhishingPageProps> = ({ initialSubmissionTyp
   const [samples, setSamples] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    if (initialSubmissionType) {
-      setSubmissionType(initialSubmissionType);
-    }
-  }, [initialSubmissionType]);
+  // Follow the parent's requested type when it changes (adjusting state while rendering, as React recommends).
+  const [seenInitialType, setSeenInitialType] = useState(initialSubmissionType);
+  if (initialSubmissionType !== seenInitialType) {
+    setSeenInitialType(initialSubmissionType);
+    if (initialSubmissionType) setSubmissionType(initialSubmissionType);
+  }
 
-  useEffect(() => {
-    api.getPhishingSamples().then(setSamples).catch(console.error);
-  }, []);
+  useLoad(() => api.getPhishingSamples().then(setSamples).catch(console.error), []);
+
+  const [sampleContent, setSampleContent] = useState<string | null>(null);   // set while the form still holds a built-in sample
 
   const handleSelectSample = (sample: any) => {
+    setSampleContent(sample.content);
     setSubmissionType(sample.submission_type);
     setContent(sample.content);
     setEmailSubject(sample.email_subject || '');
@@ -56,6 +59,7 @@ export const PhishingPage: React.FC<PhishingPageProps> = ({ initialSubmissionTyp
         content: content.trim(),
         email_subject: emailSubject.trim() || undefined,
         sender_info: senderInfo.trim() || undefined,
+        is_sample: sampleContent !== null && content.trim() === sampleContent.trim(),
       });
       setResult(res);
     } catch (err: any) {

@@ -27,7 +27,7 @@ from app.models import (
 )
 from app.utils.auth import ADMIN_ROLES
 from app.services import blocklist as blocklist_service
-from app.services import settings_store
+from app.services import enrichment, response_executor, settings_store
 from app.services.alert_engine import alert_engine
 from app.services.correlation_engine import correlation_engine
 
@@ -387,6 +387,18 @@ def investigate_incident(db: Session, inc: Incident) -> Dict[str, Any]:
                   + (f"; affected employee risk score {emp.risk_score}" if emp else "") + ".",
                   "data": {"external_ips": external, "similar_incidents_30d": prior}})
 
+    # --- reputation (VirusTotal / AbuseIPDB) -----------------------------------------------------------------
+    rep = enrichment.evidence_for_ips(db, external)
+    if rep["available"] and rep["results"]:
+        flagged = [r["ip"] for r in rep["results"] if r["malicious"]]
+        steps.append({"step": "Reputation (threat intelligence)", "data": rep,
+                      "finding": (f"Known malicious: {', '.join(flagged)}. " if flagged else "No address is known malicious. ")
+                      + " ".join(f"{r['ip']}: {r['summary']}" for r in rep["results"])[:600]})
+    else:
+        steps.append({"step": "Reputation (threat intelligence)", "data": rep,
+                      "finding": f"Skipped: {rep.get('reason', 'no external address to look up')}"})
+    known_bad = bool(rep.get("known_bad"))
+
     # --- cross-source evidence (Zetaris) ------------------------------------------------------------------------
     focus = ([external[0]] if external else []) + users[:1]
     z = _zetaris_evidence(focus) if focus else {"available": False, "reason": "No entity to query."}
@@ -406,7 +418,7 @@ def investigate_incident(db: Session, inc: Incident) -> Dict[str, Any]:
     max_risk = max((e.risk_score for e in events), default=0)
     max_sev_high = any(e.severity in ("High", "Critical") for e in events)
     score = (max_risk / 100) * 0.45 + (min(len(known_stages), 4) / 4) * 0.25 + (min(len(sources), 3) / 3) * 0.15 \
-        + (0.15 if (corroborated or related >= 3) else 0.0)
+        + (0.15 if (corroborated or related >= 3) else 0.0) + (0.10 if known_bad else 0.0)
     score = round(min(score, 0.99), 2)
     if score >= 0.7:
         verdict = "TRUE_POSITIVE"
@@ -636,18 +648,34 @@ def decide(db: Session, req: DecisionRequest, user: User, decision: str, note: O
         if emp is not None:
             emp.is_active = False
         executed = target is not None or emp is not None
-        outcome = ("Disabled in CyberShield and signed out everywhere. " if executed else "") + \
-            "CyberShield has no identity-provider integration: disable the account in your IdP to finish."
+        via_connector = response_executor.handles("DISABLE_ACCOUNT")
+        outcome = ("Disabled in CyberShield and signed out everywhere. " if executed else "")
+        outcome += ("A signed request was queued for your response connector to disable it in the identity provider; it counts as done only when the connector confirms."
+                    if via_connector else "CyberShield has no identity-provider integration: disable the account in your IdP to finish.")
+        action = None
         if inc is not None:
-            db.add(ResponseAction(incident_id=inc.incident_id, action_type="ACCOUNT_DISABLE", target=proposal["account"],
-                                  status="EXECUTED_IN_PLATFORM" if executed else "APPROVED_MANUAL", details=outcome,
-                                  is_simulated=False, executed_by=user.email, executed_at=naive_utc_now()))
+            action = ResponseAction(incident_id=inc.incident_id, action_type="ACCOUNT_DISABLE", target=proposal["account"],
+                                    status="EXECUTED_IN_PLATFORM" if executed else "APPROVED_MANUAL", details=outcome,
+                                    is_simulated=False, executed_by=user.email, executed_at=naive_utc_now())
+            db.add(action)
+            db.flush()
+        if via_connector:
+            response_executor.enqueue(db, "DISABLE_ACCOUNT", proposal["account"], decision=req, incident_id=req.incident_id,
+                                      approved_by=user.email, response_action=action)
     elif req.kind == "HOST_ISOLATION" and approve:
-        outcome = "Approved. CyberShield has no EDR or network-access integration: isolate the host with your EDR or NAC."
+        via_connector = response_executor.handles("HOST_ISOLATION")
+        outcome = ("A signed request was queued for your response connector (EDR / network access control); it counts as done only when the connector confirms."
+                   if via_connector else "Approved. CyberShield has no EDR or network-access integration: isolate the host with your EDR or NAC.")
+        action = None
         if inc is not None:
-            db.add(ResponseAction(incident_id=inc.incident_id, action_type="HOST_ISOLATION", target=proposal["host"],
-                                  status="APPROVED_MANUAL", details=outcome, is_simulated=False, executed_by=user.email,
-                                  executed_at=naive_utc_now()))
+            action = ResponseAction(incident_id=inc.incident_id, action_type="HOST_ISOLATION", target=proposal["host"],
+                                    status="APPROVED_MANUAL", details=outcome, is_simulated=False, executed_by=user.email,
+                                    executed_at=naive_utc_now())
+            db.add(action)
+            db.flush()
+        if via_connector:
+            response_executor.enqueue(db, "HOST_ISOLATION", proposal["host"], decision=req, incident_id=req.incident_id,
+                                      approved_by=user.email, response_action=action)
     elif req.kind == "INCIDENT_CLOSURE" and inc is not None:
         if approve:
             inc.status, inc.l3_status = proposal["target_status"], "DECIDED"

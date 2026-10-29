@@ -3,7 +3,7 @@ import {
   DashboardMetrics, ThreatSeverityDistribution, ActivityDataPoint,
   SecurityEvent, PhishingAnalysisResult, FileAnalysisResult,
   NetworkAnalysisBatchResult, IncidentDetail, ForensicInvestigation,
-  SystemStatusData, UserSession, SessionState, BlocklistEntry, FeedTokenInfo, ZetarisStatus, ZetarisIngestReport, Investigation, CategoryCount, AdminUser, AuditEntry, SocOverview, AgentRun, DecisionRequest, DetectionRule, AdminOverview, SettingDef, PermissionRow, IntegrationRow, Assignable, EventDetail, Employee, MonitoringSource,
+  SystemStatusData, UserSession, SessionState, BlocklistEntry, FeedTokenInfo, ZetarisStatus, ZetarisIngestReport, Investigation, CategoryCount, AdminUser, AuditEntry, SocOverview, AgentRun, DecisionRequest, DetectionRule, AdminOverview, SettingDef, PermissionRow, IntegrationRow, Assignable, EventDetail, ThreatIntelResult, IntegrationTestResult, Employee, MonitoringSource,
   SecretFinding, NotificationDelivery, URLInspectionResult
 } from '../types';
 
@@ -97,6 +97,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  threatIntel: (indicator: string, refresh = false) =>
+    request<ThreatIntelResult>(`/threat-intel/lookup?indicator=${encodeURIComponent(indicator)}${refresh ? '&refresh=true' : ''}`),
+  ssoConfig: () => request<{ enabled: boolean; provider_name: string }>('/auth/sso/config'),
+  ssoLoginUrl: () => `${BASE_URL}/auth/sso/login`,
   logout: () => request<{ status: string }>('/auth/logout', { method: 'POST' }),
   logoutAll: () => request<{ status: string; sessions_revoked: number }>('/auth/logout-all', { method: 'POST' }),
   mfaDisable: (password: string, code: string) =>
@@ -237,6 +241,8 @@ export const api = {
     request<SettingDef[]>('/admin/settings', { method: 'PUT', body: JSON.stringify(changes) }),
   getPermissions: () => request<PermissionRow[]>('/admin/permissions'),
   getIntegrations: () => request<IntegrationRow[]>('/admin/integrations'),
+  testIntegration: (key: string, to?: string) =>
+    request<IntegrationTestResult>(`/admin/integrations/${encodeURIComponent(key)}/test`, { method: 'POST', body: JSON.stringify(to ? { to } : {}) }),
   getCriticalAlerts: (limit = 12) => request<SecurityEvent[]>(`/dashboard/critical-alerts?limit=${limit}`),
   getEventDetail: (eventId: string) => request<EventDetail>(`/events/${encodeURIComponent(eventId)}`),
   updateUser: (id: number, payload: { role?: string; is_active?: boolean }) =>
@@ -272,7 +278,7 @@ export const api = {
   },
 
   // Phishing & Scam
-  analyzePhishing: (payload: { submission_type: string; content: string; email_subject?: string; sender_info?: string }) =>
+  analyzePhishing: (payload: { submission_type: string; content: string; email_subject?: string; sender_info?: string; is_sample?: boolean }) =>
     request<PhishingAnalysisResult>('/phishing/analyze', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -300,8 +306,8 @@ export const api = {
   getFileSamples: () => request<any[]>('/files/samples'),
 
   // Network Anomaly
-  analyzeNetworkBatch: (records: any[]) =>
-    request<NetworkAnalysisBatchResult>('/network/analyze-batch', {
+  analyzeNetworkBatch: (records: any[], isSample = false) =>
+    request<NetworkAnalysisBatchResult>(`/network/analyze-batch${isSample ? '?is_sample=true' : ''}`, {
       method: 'POST',
       body: JSON.stringify(records),
     }),

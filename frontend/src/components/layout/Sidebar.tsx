@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import {
   LayoutDashboard, Users, Activity, ShieldAlert, KeyRound,
   AlertTriangle, Fingerprint, BarChart3, Bell, Settings,
-  Globe, UserCheck, ShieldCheck, ChevronDown, ChevronRight,
-  Radio, FileSearch, Network, MailWarning, FileText
+  Globe, ShieldCheck, ChevronDown, ChevronRight,
+  Network
 } from 'lucide-react';
 import { UserRole } from '../../types';
 
@@ -55,7 +55,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   openIncidentsCount,
   userRole = 'Super Admin',
-  userName = 'Admin',
   isOpenMobile = false,
   onCloseMobile,
 }) => {

@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Database, RefreshCw, Play, Search, Ban } from 'lucide-react';
 import { api } from '../api/client';
 import { Investigation, UserSession, ZetarisIngestReport, ZetarisStatus } from '../types';
 import { NavTab } from '../components/layout/Sidebar';
+import { useLoad } from '../hooks/useLoad';
 
 interface Props {
   currentUser: UserSession;
@@ -37,7 +38,7 @@ export const ZetarisPage: React.FC<Props> = ({ currentUser, onNavigateToTab }) =
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useLoad(load, [load]);
 
   const ingest = async () => {
     setBusy(true);

@@ -1,22 +1,25 @@
 from datetime import datetime, timezone
 from typing import List
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Depends, Body, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import SecurityEvent, ThreatAnalysis, AuditLog
+from app.models import SecurityEvent, ThreatAnalysis, AuditLog, User
+from app.utils.auth import require_authenticated_user
 from app.schemas import NetworkRecordInput, NetworkAnalysisBatchResponse
 from app.services.network_engine import network_detector
 
 router = APIRouter(prefix="/network", tags=["Network Anomaly Detection"])
 
 @router.post("/analyze-batch", response_model=NetworkAnalysisBatchResponse)
-def analyze_network_batch(records: List[NetworkRecordInput] = Body(...), db: Session = Depends(get_db)):
+def analyze_network_batch(records: List[NetworkRecordInput] = Body(...), is_sample: bool = Query(False), db: Session = Depends(get_db),
+                          user: User = Depends(require_authenticated_user)):
     result = network_detector.analyze_batch(records)
 
     # Persist any generated alerts as SecurityEvents
     now = datetime.now(timezone.utc)
     for alert in result.alerts:
         sec_event = SecurityEvent(
+            is_simulated=is_sample,
             event_id=f"SEC-{alert.event_id}",
             timestamp=now,
             event_source="Network Anomaly Engine",
@@ -36,7 +39,7 @@ def analyze_network_batch(records: List[NetworkRecordInput] = Body(...), db: Ses
 
     audit = AuditLog(
         action="NETWORK_BATCH_ANALYZED",
-        actor="SOC Analyst / Ingestion Pipeline",
+        actor=user.email,
         resource_type="NetworkBatch",
         resource_id=f"BATCH-{int(now.timestamp())}",
         details=f"Analyzed {result.total_records_analyzed} network records. Detected {result.anomalies_detected} anomalies ({result.benign_count} benign)."

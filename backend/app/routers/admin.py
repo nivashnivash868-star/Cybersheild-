@@ -1,7 +1,7 @@
 from datetime import timedelta
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
@@ -11,9 +11,10 @@ from app.models import (
     AuditLog, DecisionRequest, FeedToken, IngestState, Incident, NotificationDelivery, SecurityEvent, User, UserSession,
     naive_utc_now,
 )
-from app.services import settings_store
+from app.services import integration_tests, response_executor, settings_store, threat_intel
 from app.services.outbox import email_configured, sms_configured
 from app.utils.auth import ADMIN_ROLES, require_roles
+from app.utils.ratelimit import limiter
 
 router = APIRouter(prefix="/admin", tags=["Security Administrator"])
 
@@ -118,15 +119,42 @@ def permissions(_: User = Depends(require_roles(ADMIN_ROLES))):
 
 @router.get("/integrations")
 def integrations(db: Session = Depends(get_db), _: User = Depends(require_roles(ADMIN_ROLES))):
-    """Where alerts and data come from, and whether each is really connected. Secrets are set in the server environment."""
+    """Where alerts and data come from, and whether each is really connected. Secrets are set in the server environment.
+    `configured` means settings are present; use the Test button (POST /admin/integrations/{key}/test) for a real call."""
+    ti = {p["provider"]: p for p in threat_intel.provider_status(db)}
     return [
-        {"name": "Email (SMTP)", "configured": email_configured(), "detail": settings.SMTP_HOST or "SMTP_HOST is not set", "recipients": settings.ALERT_SOC_EMAILS},
-        {"name": "SMS (Twilio)", "configured": sms_configured(), "detail": "Twilio account set" if sms_configured() else "TWILIO_* are not set", "recipients": settings.ALERT_SOC_SMS},
-        {"name": "Zetaris data sources", "configured": settings.zetaris_configured,
+        {"key": "email", "name": "Email (SMTP)", "configured": email_configured(), "detail": settings.SMTP_HOST or "SMTP_HOST is not set", "recipients": settings.ALERT_SOC_EMAILS},
+        {"key": "sms", "name": "SMS (Twilio)", "configured": sms_configured(), "detail": "Twilio account set" if sms_configured() else "TWILIO_* are not set", "recipients": settings.ALERT_SOC_SMS},
+        {"key": "zetaris", "name": "Zetaris data sources", "configured": settings.zetaris_configured,
          "detail": settings.ZETARIS_BASE_URL if settings.zetaris_configured else "ZETARIS_ORG_ID / ZETARIS_API_KEY are not set",
          "synthetic": settings.ZETARIS_DATA_IS_SYNTHETIC},
-        {"name": "Firewall / DNS blocklist feeds", "configured": db.query(FeedToken).filter(FeedToken.revoked_at.is_(None)).count() > 0,
+        {"key": None, "name": "Firewall / DNS blocklist feeds", "configured": db.query(FeedToken).filter(FeedToken.revoked_at.is_(None)).count() > 0,
          "detail": "Credentials are managed on the Blocklist page"},
-        {"name": "Identity provider (disable accounts)", "configured": False, "detail": "Not integrated: account disabling is done in CyberShield only"},
-        {"name": "EDR / network access control (isolate hosts)", "configured": False, "detail": "Not integrated: host isolation is approved here and carried out by a responder"},
+        {"key": "virustotal", "name": "Threat intelligence: VirusTotal", "configured": ti["virustotal"]["state"] in ("connected", "unverified", "error"),
+         "detail": ti["virustotal"]["detail"], "state": ti["virustotal"]["state"]},
+        {"key": "abuseipdb", "name": "Threat intelligence: AbuseIPDB", "configured": ti["abuseipdb"]["state"] in ("connected", "unverified", "error"),
+         "detail": ti["abuseipdb"]["detail"], "state": ti["abuseipdb"]["state"]},
+        {"key": "response", "name": "Response connector (identity provider / EDR)", "configured": response_executor.configured(),
+         "detail": (f"Approved {', '.join(sorted(settings.response_actions))} requests are sent, signed, to {settings.RESPONSE_WEBHOOK_URL}; "
+                    "an action counts as done only when your automation confirms it") if response_executor.configured()
+                   else "RESPONSE_WEBHOOK_URL / RESPONSE_WEBHOOK_SECRET (32+ characters) are not set: disabling an account affects CyberShield only and host isolation is carried out by a responder"},
+        {"key": "sso", "name": "Single sign-on (OpenID Connect)", "configured": settings.oidc_configured,
+         "detail": f"{settings.OIDC_PROVIDER_NAME} via {settings.OIDC_ISSUER}" if settings.oidc_configured else "OIDC_ISSUER / OIDC_CLIENT_ID are not set: staff sign in with passwords"},
     ]
+
+
+@router.post("/integrations/{key}/test")
+def test_integration(key: str, payload: Dict[str, Any] = Body(default={}), db: Session = Depends(get_db),
+                     user: User = Depends(require_roles(ADMIN_ROLES))):
+    """Make a real call to one integration and say what happened. Email/SMS test messages go to the address in `to`
+    (email defaults to the administrator's own address; SMS must be given a number)."""
+    if key not in integration_tests.KEYS:
+        raise HTTPException(404, "Unknown integration.")
+    if not limiter.hit(f"integration-test:{user.id}", 10, 60):
+        raise HTTPException(429, "Too many tests; wait a minute.")
+    to = payload.get("to") if isinstance(payload.get("to"), str) else None
+    result = integration_tests.run(db, key, user, to)
+    db.add(AuditLog(action="INTEGRATION_TEST", actor=user.email, resource_type="Integration", resource_id=key,
+                    details=f"ok={result['ok']}: {result['detail']}"[:480]))
+    db.commit()
+    return {"key": key, **result}

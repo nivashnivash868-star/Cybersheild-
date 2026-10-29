@@ -20,10 +20,10 @@ implemented and tested.
 | **Blocking** | Real as authenticated pull feeds (IP, domain, URL) for firewalls and DNS sinkholes, with approval and expiry. Enforcement happens when your firewall pulls the feed. |
 | **Alerts** | Real email (SMTP) and SMS (Twilio) through a queue with retries. Status says `SENT` only when the provider accepted the message. |
 | **Audit** | Real. Append-only HMAC hash chain; administrators can verify it. |
-| **Phishing, file and network detectors** | Baseline heuristics and small models trained on a handful of samples. They are not evaluated and will produce false positives. |
-| **Threat intelligence** | Not built. Reputation API keys are accepted, but no lookups are made. |
-| **Identity-provider and EDR actions** | Not integrated. Disabling an account affects CyberShield only; host isolation is approved here and carried out by a person. |
-| **SSO (OIDC)** | Not built. |
+| **Phishing, file and network detectors** | Rules plus small models, **measured** on held-out data with stated limits: see [docs/detection-evaluation.md](docs/detection-evaluation.md). On a held-out phishing-feed sample 64% of URLs scored High or above and 81% Medium or above, with about 0.3% false alerts on unfamiliar legitimate sites. They are a triage aid, not a verdict. |
+| **Threat intelligence** | Real when `VIRUSTOTAL_API_KEY` / `ABUSEIPDB_API_KEY` are set: lookups for public IPs, domains and file hashes (never file contents, private addresses or, by default, full URLs), cached and rate-limited. Status says "connected" only after a call succeeded. See [docs/integration-testing.md](docs/integration-testing.md). |
+| **Identity-provider and EDR actions** | Real through a signed webhook to your own automation ([docs/response-connector.md](docs/response-connector.md)): CyberShield holds no IdP or EDR credentials and counts an action as done only when your automation confirms it. Without a connector, disabling an account affects CyberShield only and host isolation is done by a person. |
+| **SSO (OpenID Connect)** | Real: authorization code + PKCE, signed ID tokens verified, existing users only, never auto-created ([docs/sso.md](docs/sso.md)). Tested against a fake provider; not yet against a live tenant. |
 
 Data that is fabricated (the demo seed, the telemetry pulse, or Zetaris tables marked as synthetic) is flagged
 **SIMULATED** wherever it appears.
@@ -62,8 +62,16 @@ cd ../frontend && npm ci && npm run build            # the backend serves fronte
 cd backend && python -m pytest -q          # or: docker build --target test .
 ```
 
-The suite covers authentication and role checks on every route, MFA, the audit chain, alert delivery, the blocklist,
-all three SOC tiers, the administrator and analyst workflows, and the Zetaris client against a fake server.
+The backend suite (367 tests) covers authentication and role checks on every route, MFA, the audit chain, alert delivery,
+the blocklist, all three SOC tiers, the administrator and analyst workflows, the Zetaris client against a fake server, SSO
+against a fake identity provider, the response connector, threat-intelligence lookups, a schema-driven API fuzzer, and
+whole-pipeline scenarios with known answers. The frontend has component tests and a lint gate:
+
+```bash
+cd frontend && npm test && npm run lint     # Vitest + Testing Library; 0 lint warnings
+```
+
+Set `TEST_DATABASE_URL` (a `postgresql://` URL) to run the backend suite on PostgreSQL.
 
 ## Configuration
 
@@ -97,9 +105,16 @@ background worker: alert queue, Zetaris ingest, L1/L2, blocklist expiry
 
 ## Verification status
 
-- The backend test suite passes, and the image builds and runs its tests on Python 3.13.
-- The application has been run against PostgreSQL and a mail catcher in Docker, and each role's UI has been exercised.
-- The Zetaris integration has been run against a live local Zetaris instance (the hackathon bundle) loaded with the
-  synthetic dataset, end to end: ingest, L1 triage, L2 investigation with raw-log evidence, and the investigation view.
-  It has not been run against Zetaris Cloud or against real production logs.
-- The scoring thresholds in levels 1 and 2 are heuristics. They have not been validated on real incident data.
+- **Backend:** 367 tests pass on SQLite (Python 3.9) and on Python 3.13 in the test image; the suite has also been run
+  against PostgreSQL. **Frontend:** 36 component tests, TypeScript clean, 0 lint warnings, production build.
+- The application has been run end to end in Docker against PostgreSQL, a mail catcher and the **live local Zetaris
+  instance** (the hackathon bundle) loaded with synthetic data: ingest, L1 triage, L2 investigation with raw-log evidence,
+  approvals, blocklist feed, activation email, and the integration test endpoints.
+- A line-by-line audit for hardcoded, simulated and fake values is in [docs/final-audit.md](docs/final-audit.md).
+- **Detection quality** is measured, not assumed ([docs/detection-evaluation.md](docs/detection-evaluation.md)), but on
+  small public samples and synthetic scenarios. No real malware was analysed and no production traffic was seen.
+- **Not verified against the real thing** (needs your accounts; use the Test buttons in Administration):
+  Zetaris Cloud, a live OIDC tenant, Twilio SMS, VirusTotal/AbuseIPDB keys, and a real SOAR/IdP/EDR receiver. The code paths
+  are tested against fakes that follow each service's documentation.
+- The L1/L2 scoring thresholds are tunable defaults. They behave sensibly on the synthetic scenarios and have not been
+  calibrated on real incident data or analyst feedback.
