@@ -1,0 +1,7 @@
+# Optional: lets a Zetaris instance running on the same machine read CyberShield's own database (read-only, through the
+# zetaris_export views). Use:  docker compose -f docker-compose.yml -f docker-compose.zetaris.yml up -d
+# The port is bound to 127.0.0.1 only. Set up the read-only role and register the source with scripts/register_in_zetaris.sh.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${ZETARIS_EXPORT_PORT:-55433}:5432"
